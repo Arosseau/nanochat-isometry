@@ -1,0 +1,133 @@
+#!/bin/bash
+#SBATCH --job-name=nanochat-muono
+#SBATCH --time=6:00:00
+#SBATCH --gpus=1
+#SBATCH -M hydra
+#SBATCH -p hopper_gpu
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+
+# MuonO experiment: Muon + decoupled orthogonal regularization for 2D matrix params,
+# with AdamW for 1D params (embeddings, scalars). Replaces weight decay with isometry-
+# promoting regularization while keeping Muon's Polar Express momentum.
+#
+# Usage:
+#   sbatch runs/run_h200_muono.sh
+#   bash runs/run_h200_muono.sh
+#   SERIES_NAME=myexp sbatch runs/run_h200_muono.sh
+
+export OMP_NUM_THREADS=1
+SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
+export NANOCHAT_BASE_DIR="${SCRATCH_BASE}/nanochat_cache"
+mkdir -p "$SCRATCH_BASE" "$NANOCHAT_BASE_DIR"
+
+module purge
+module load Python/3.11.3-GCCcore-12.3.0
+
+# Load secrets (WANDB_API_KEY, GITHUB_TOKEN)
+source "${SCRATCH_BASE}/secrets.sh"
+export WANDB_API_KEY
+
+GITHUB_TOKEN="${GITHUB_TOKEN:?Must set GITHUB_TOKEN in secrets.sh}"
+REPO_OWNER="Arosseau"
+REPO_NAME="nanochat-isometry"
+REPO_URL="https://oauth2:${GITHUB_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
+REPO_DIR="${SCRATCH_BASE}/${REPO_NAME}"
+
+# --- Clone if missing, otherwise pull latest ---
+if [ ! -d "$REPO_DIR/.git" ]; then
+    echo "Cloning ${REPO_NAME}..."
+    git clone "$REPO_URL" "$REPO_DIR"
+else
+    echo "Repo exists — pulling latest changes..."
+    cd "$REPO_DIR"
+    git reset --hard HEAD
+    git clean -fd
+    git pull --rebase origin main
+fi
+
+cd "$REPO_DIR"
+
+# --- Setup (uv, venv, deps, dataset, tokenizer) ---
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+[ -d ".venv" ] || uv venv
+uv sync --extra gpu
+source .venv/bin/activate
+
+python -m nanochat.dataset -n 100  # Karpathy uses 1000 for his d12-d26 miniseries but says it "can probably be reduced, TODO". ~100 shards (~10GB) is our estimate for d12 alone.
+TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
+if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
+    echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
+else
+    python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
+fi
+
+# -----------------------------------------------------------------------------
+# Configuration
+SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
+DEPTH=12
+RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
+mkdir -p "$RESULTS_DIR"
+RESULTS_FILE="$RESULTS_DIR/results.csv"
+if [ ! -f "$RESULTS_FILE" ]; then
+    echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
+fi
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+
+run_exp() {
+    local NAME="$1"
+    shift
+    local TAG="${SERIES_NAME}_muono_${NAME}"
+    local LOG="$RESULTS_DIR/${TAG}.log"
+
+    log "Running: $NAME"
+    START=$(date +%s)
+
+    python -m scripts.base_train \
+        --depth=$DEPTH \
+        --run="${SERIES_NAME}_isometry" \
+        --model-tag="${TAG}" \
+        --core-metric-every=999999 \
+        --sample-every=-1 \
+        --save-every=-1 \
+        "$@" \
+        2>&1 | tee "$LOG"
+
+    END=$(date +%s)
+    ELAPSED=$((END - START))
+    VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
+    log "  $NAME: bpb=$VAL_BPB, time=${ELAPSED}s"
+    echo "$NAME,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+}
+
+log "=================================================="
+log "${SERIES_NAME} MuonO Experiments (d${DEPTH})"
+log "=================================================="
+
+# 1) MuonO: Muon + decoupled ortho reg, no weight decay
+run_exp "muono" \
+    --weight-decay=0.0 \
+    --orth-reg-lambda=1e-3 \
+    --orth-reg-decoupled
+
+# 2) MuonO with ReLU activation scale (2.0) to compensate relu^2 signal loss
+run_exp "muono_relu" \
+    --weight-decay=0.0 \
+    --orth-reg-lambda=1e-3 \
+    --orth-reg-decoupled \
+    --orth-reg-activation-scale=2.0
+
+# 3) MuonO coupled (auxiliary loss, gradients flow through Muon moments)
+run_exp "muono_coupled" \
+    --weight-decay=0.0 \
+    --orth-reg-lambda=1e-3
+
+log "=================================================="
+log "MuonO experiments complete!"
+log "=================================================="
+log "Results saved to: $RESULTS_FILE"
+echo ""
+echo "Results:"
+column -t -s',' "$RESULTS_FILE"

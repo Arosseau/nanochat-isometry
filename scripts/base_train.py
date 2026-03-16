@@ -19,14 +19,15 @@ import time
 import math
 import argparse
 from dataclasses import asdict
-from contextlib import nullcontext, contextmanager
+from contextlib import contextmanager
 
 import wandb
 import torch
+import torch.distributed as dist
 
-from nanochat.gpt import GPT, GPTConfig
+from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -59,15 +60,24 @@ parser.add_argument("--target-param-data-ratio", type=float, default=10.5, help=
 parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
-parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
-parser.add_argument("--weight-decay", type=float, default=0.2, help="cautious weight decay for the Muon optimizer (for weights)")
+parser.add_argument("--unembedding-lr", type=float, default=0.008, help="learning rate for unembedding parameters (Adam)")
+parser.add_argument("--weight-decay", type=float, default=0.28, help="cautious weight decay for the Muon optimizer (for weights)")
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
 parser.add_argument("--scalar-lr", type=float, default=0.5, help="learning rate for scalars (resid_lambdas, x0_lambdas)")
-parser.add_argument("--adam-beta1", type=float, default=0.8, help="Adam beta1 for embedding/unembedding")
-parser.add_argument("--adam-beta2", type=float, default=0.95, help="Adam beta2 for embedding/unembedding")
-parser.add_argument("--warmup-ratio", type=float, default=0.0, help="ratio of iterations for LR warmup")
-parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="ratio of iterations for LR warmdown")
-parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
+parser.add_argument("--optimizer", type=str, default="muon-adamw", choices=["muon-adamw", "adamw"], help="optimizer: muon-adamw (default, Muon for matrices + AdamW for rest) or adamw (AdamW for all params)")
+# Orthogonal regularization (isometry-promoting, replaces or supplements weight decay)
+parser.add_argument("--orth-reg-lambda", type=float, default=0.0, help="orthogonal regularization strength λ (0 = disabled). Penalizes ||W^T W - sI||_F^2")
+parser.add_argument("--orth-reg-decoupled", action="store_true", help="use AdamO-style decoupled ortho reg (apply outside optimizer moments). Recommended over coupled mode.")
+parser.add_argument("--orth-reg-lr-scale", type=float, default=1.0, help="η_iso / η ratio for decoupled ortho reg learning rate (default: 1.0 = same as base lr)")
+parser.add_argument("--orth-reg-activation-scale", type=float, default=1.0, help="activation scale s for ortho reg target: W^T W ≈ sI (use 2.0 for ReLU/relu^2 compensation)")
+parser.add_argument("--orth-reg-no-rect-scale", action="store_true", help="disable (out_dim/in_dim) scale correction for tall matrices. By default, tall matrices (out_dim>in_dim) use scale s*(out_dim/in_dim); this flag makes all matrices use s directly.")
+# Normalization
+parser.add_argument("--norm-mode", type=str, default="rmsnorm", choices=["rmsnorm", "layernorm", "none"], help="normalization mode: rmsnorm (default, parameterless), layernorm (learnable scale/offset), none (skip normalization)")
+parser.add_argument("--freeze-norm", action="store_true", help="freeze LayerNorm parameters at init values (weight=1, bias=0). Only effective with --norm-mode=layernorm.")
+parser.add_argument("--sv-stats-every", type=int, default=-1, help="compute SV stats every N steps (-1=auto ~50 evals, 0=disable). Always includes step 0 and last step.")
+parser.add_argument("--warmup-steps", type=int, default=40, help="number of steps for LR warmup")
+parser.add_argument("--warmdown-ratio", type=float, default=0.65, help="ratio of iterations for LR warmdown")
+parser.add_argument("--final-lr-frac", type=float, default=0.05, help="final LR as fraction of initial LR")
 parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = disable)")
@@ -86,7 +96,6 @@ user_config = vars(args).copy()  # for logging
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 if device_type == "cuda":
@@ -95,17 +104,23 @@ if device_type == "cuda":
     print0(f"GPU: {gpu_device_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
 else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
+print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
-if HAS_FA3:
+from nanochat.flash_attention import USE_FA3
+using_fa3 = USE_FA3
+if using_fa3:
     print0("✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.")
 else:
     print0("!" * 80)
-    print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
+    if HAS_FA3 and COMPUTE_DTYPE != torch.bfloat16:
+        print0(f"WARNING: Flash Attention 3 only supports bf16, but COMPUTE_DTYPE={COMPUTE_DTYPE}. Using PyTorch SDPA fallback")
+    else:
+        print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
     print0("WARNING: Training will be less efficient without FA3")
     if args.window_pattern != "L":
         print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
@@ -133,6 +148,8 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        norm_mode=args.norm_mode,
+        freeze_norm=args.freeze_norm,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -190,7 +207,7 @@ if args.fp8:
 # Context manager to temporarily disable FP8 so that model evaluation remains in BF16
 @contextmanager
 def disable_fp8(model):
-    """Temporarily swap Float8Linear modules with nn.Linear for BF16 evaluation.
+    """Temporarily swap Float8Linear modules with Linear for BF16 evaluation.
 
     CastConfig is a frozen dataclass, so we can't mutate scaling_type. Instead,
     we swap out Float8Linear modules entirely and restore them after.
@@ -213,9 +230,9 @@ def disable_fp8(model):
         yield  # No FP8 modules, nothing to do
         return
 
-    # Swap Float8Linear -> nn.Linear (shares the same weight tensor, no copy)
+    # Swap Float8Linear -> Linear (our custom class that casts weights to match input dtype)
     for parent, attr_name, fp8_module in fp8_locations:
-        linear = nn.Linear(
+        linear = Linear(
             fp8_module.in_features,
             fp8_module.out_features,
             bias=fp8_module.bias is not None,
@@ -305,15 +322,32 @@ optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
     scalar_lr=args.scalar_lr * batch_lr_scale,
-    adam_betas=(args.adam_beta1, args.adam_beta2),
-    # Muon hyperparameters
+    # Muon/matrix hyperparameters
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
+    optimizer_type=args.optimizer,
 )
+
+# Orthogonal regularization setup
+ortho_matrix_params = []
+orth_rect_scale = not args.orth_reg_no_rect_scale
+if args.orth_reg_lambda > 0:
+    from nanochat.ortho_reg import get_ortho_reg_params, compute_ortho_reg_loss, apply_decoupled_ortho_reg
+    ortho_matrix_params = get_ortho_reg_params(orig_model)
+    mode_str = "decoupled (AdamO)" if args.orth_reg_decoupled else "coupled (auxiliary loss)"
+    print0(f"Orthogonal regularization: λ={args.orth_reg_lambda}, mode={mode_str}, "
+           f"activation_scale={args.orth_reg_activation_scale}, rect_scale={orth_rect_scale}, "
+           f"lr_scale={args.orth_reg_lr_scale}, params={len(ortho_matrix_params)}")
 
 if resuming:
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
+
+# -----------------------------------------------------------------------------
+# GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
+scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
+if scaler is not None:
+    print0("GradScaler enabled for fp16 training")
 
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
@@ -343,12 +377,20 @@ else:
     raise ValueError("No training horizon specified")
 total_tokens = total_batch_size * num_iterations # the actual number of tokens we will train for
 print0(f"Total number of training tokens: {total_tokens:,}")
+
+# Singular value stats: resolve interval and file path
+sv_stats_every = 0  # 0 = disabled
+if args.sv_stats_every != 0:
+    sv_stats_every = max(1, num_iterations // 50) if args.sv_stats_every == -1 else args.sv_stats_every
+sv_stats_filepath = os.path.join(base_dir, "sv_stats", f"{output_dirname}_sv_stats.jsonl")
+if sv_stats_every > 0:
+    print0(f"SV stats: every {sv_stats_every} steps (~{num_iterations // sv_stats_every} evals), saved to {sv_stats_filepath}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 def get_lr_multiplier(it):
-    warmup_iters = round(args.warmup_ratio * num_iterations)
+    warmup_iters = args.warmup_steps
     warmdown_iters = round(args.warmdown_ratio * num_iterations)
     if it < warmup_iters:
         return (it + 1) / warmup_iters
@@ -358,15 +400,15 @@ def get_lr_multiplier(it):
         progress = (num_iterations - it) / warmdown_iters
         return progress * 1.0 + (1 - progress) * args.final_lr_frac
 
-# Momentum scheduler for Muon optimizer (warms up to 0.95 over the first 300 steps)
+# Momentum scheduler for Muon optimizer (warms up to 0.97 over the first 400 steps)
 def get_muon_momentum(it):
-    frac = min(it / 300, 1)
-    momentum = (1 - frac) * 0.85 + frac * 0.95
+    frac = min(it / 400, 1)
+    momentum = (1 - frac) * 0.85 + frac * 0.97
     return momentum
 
-# Weight decay scheduler for Muon optimizer (linearly decays to zero over the course of training)
+# Weight decay scheduler (cosine decay to zero over the course of training)
 def get_weight_decay(it):
-    return weight_decay_scaled * (1 - it / num_iterations)
+    return weight_decay_scaled * 0.5 * (1 + math.cos(math.pi * it / num_iterations))
 
 # -----------------------------------------------------------------------------
 # Training loop
@@ -405,7 +447,7 @@ while True:
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
-        with disable_fp8(model), autocast_ctx:
+        with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
         if val_bpb < min_val_bpb:
@@ -418,13 +460,31 @@ while True:
         })
         model.train()
 
+    # once in a while: compute singular value statistics for isometry monitoring
+    # Uses orig_model (uncompiled) and torch.linalg.svdvals (values only, no vectors)
+    # ~40 wandb scalars + 3 histograms; also appended to JSONL for offline matplotlib use
+    if sv_stats_every > 0 and (step == 0 or last_step or step % sv_stats_every == 0):
+        from nanochat.sv_stats import compute_sv_stats, save_sv_stats
+        synchronize()  # ensure GPU is settled before SVD (params are fp32 master copies)
+        sv = compute_sv_stats(orig_model)
+        # Log to wandb: global scalars, per-type scalars, and histograms
+        sv_wandb = {**sv['wandb'], 'step': step, 'total_training_flops': flops_so_far}
+        for metric, values in sv['histograms'].items():
+            sv_wandb[f'sv/hist/{metric}'] = wandb.Histogram(values)
+        wandb_run.log(sv_wandb)
+        # Save full record (including per_matrix) to JSONL for matplotlib
+        save_sv_stats(sv, step, sv_stats_filepath, flops=flops_so_far)
+        print0(f"Step {step:05d} | SV stats: cond={sv['global']['cond']:.3f} "
+               f"eff_rank={sv['global']['eff_rank']:.2f} "
+               f"max_sv2={sv['global']['max_sv2']:.4f}")
+
     # once in a while: estimate the CORE metric (all ranks participate)
     # use the original uncompiled model because the inputs keep changing shape
     # disable FP8 for evaluation to use BF16 for more consistent/accurate results
     results = {}
     if args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
         model.eval()
-        with disable_fp8(orig_model), autocast_ctx:
+        with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
         print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
         wandb_run.log({
@@ -451,7 +511,7 @@ while True:
         engine = Engine(orig_model, tokenizer) # use orig_model to avoid recompilation
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
-            with disable_fp8(orig_model), autocast_ctx:
+            with disable_fp8(orig_model):
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
             print0(tokenizer.decode(sample[0]))
         model.train()
@@ -491,12 +551,23 @@ while True:
     synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        with autocast_ctx:
-            loss = model(x, y)
+        loss = model(x, y)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        loss.backward()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
         x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    # Coupled orthogonal regularization: add orth reg gradients to existing task gradients.
+    # Done once (not per micro-step) since R_iso depends only on params, not on data.
+    if args.orth_reg_lambda > 0 and not args.orth_reg_decoupled:
+        orth_loss = compute_ortho_reg_loss(ortho_matrix_params, args.orth_reg_lambda,
+                                           args.orth_reg_activation_scale, orth_rect_scale)
+        if scaler is not None:
+            scaler.scale(orth_loss).backward()
+        else:
+            orth_loss.backward()  # adds to accumulated task gradients
     # step the optimizer
     lrm = get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
@@ -506,7 +577,27 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
-    optimizer.step()
+        elif group.get('schedule_wd', False):
+            # AdamW-only mode: schedule weight decay with cosine decay (same as Muon)
+            group["weight_decay"] = group.get("initial_weight_decay", 0.0) * 0.5 * (1 + math.cos(math.pi * step / num_iterations))
+    if scaler is not None:
+        scaler.unscale_(optimizer)
+        # In distributed training, all ranks must agree on whether to skip the step.
+        # Each rank may independently encounter inf/nan gradients, so we all-reduce
+        # the found_inf flag (MAX = if any rank found inf, all ranks skip).
+        if is_ddp_initialized():
+            for v in scaler._found_inf_per_device(optimizer).values():
+                dist.all_reduce(v, op=dist.ReduceOp.MAX)
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        optimizer.step()
+    # Decoupled orthogonal regularization (AdamO-style): apply after optimizer step,
+    # keeping isometry gradients out of Adam/Muon moment estimates.
+    if args.orth_reg_lambda > 0 and args.orth_reg_decoupled:
+        orth_lr = args.matrix_lr * batch_lr_scale * lrm * args.orth_reg_lr_scale
+        apply_decoupled_ortho_reg(ortho_matrix_params, orth_lr, args.orth_reg_lambda,
+                                  args.orth_reg_activation_scale, orth_rect_scale)
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
     synchronize()
@@ -547,6 +638,12 @@ while True:
             "train/mfu": mfu,
             "train/epoch": epoch,
         }
+        if args.orth_reg_lambda > 0 and step % 500 == 0:
+            with torch.no_grad():
+                from nanochat.ortho_reg import compute_ortho_reg_loss
+                orth_loss_val = compute_ortho_reg_loss(ortho_matrix_params, 1.0,
+                                                       args.orth_reg_activation_scale, orth_rect_scale).item()
+            log_data["train/orth_reg_loss"] = orth_loss_val
         wandb_run.log(log_data)
 
     # state update
@@ -580,7 +677,7 @@ get_report().log(section="Base model training", data=[
         "Number of training tokens": total_tokens,
         "Tokens : Scaling params ratio": total_batch_size * num_iterations / num_scaling_params,
         "DDP world size": ddp_world_size,
-        "warmup_ratio": args.warmup_ratio,
+        "warmup_steps": args.warmup_steps,
         "warmdown_ratio": args.warmdown_ratio,
         "final_lr_frac": args.final_lr_frac,
     },

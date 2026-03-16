@@ -1,0 +1,99 @@
+#!/bin/bash
+#SBATCH --job-name=nanochat-baseline
+#SBATCH --time=6:00:00
+#SBATCH --gpus=1
+#SBATCH -M hydra
+#SBATCH -p hopper_gpu
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+
+# Baseline experiment: Karpathy's default Muon+AdamW with weight decay at d12.
+# This is the control run that our isometry regularization variants compare against.
+#
+# Usage:
+#   sbatch runs/run_h200_baseline.sh                           # submit to Hydra H200
+#   bash runs/run_h200_baseline.sh                             # run directly (interactive)
+#   SERIES_NAME=myexp sbatch runs/run_h200_baseline.sh
+
+export OMP_NUM_THREADS=1
+SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
+export NANOCHAT_BASE_DIR="${SCRATCH_BASE}/nanochat_cache"
+mkdir -p "$SCRATCH_BASE" "$NANOCHAT_BASE_DIR"
+
+module purge
+module load Python/3.11.3-GCCcore-12.3.0
+
+# Load secrets (WANDB_API_KEY, GITHUB_TOKEN)
+source "${SCRATCH_BASE}/secrets.sh"
+export WANDB_API_KEY
+
+GITHUB_TOKEN="${GITHUB_TOKEN:?Must set GITHUB_TOKEN in secrets.sh}"
+REPO_OWNER="Arosseau"
+REPO_NAME="nanochat-isometry"
+REPO_URL="https://oauth2:${GITHUB_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
+REPO_DIR="${SCRATCH_BASE}/${REPO_NAME}"
+
+# --- Clone if missing, otherwise pull latest ---
+if [ ! -d "$REPO_DIR/.git" ]; then
+    echo "Cloning ${REPO_NAME}..."
+    git clone "$REPO_URL" "$REPO_DIR"
+else
+    echo "Repo exists — pulling latest changes..."
+    cd "$REPO_DIR"
+    git reset --hard HEAD
+    git clean -fd
+    git pull --rebase origin main
+fi
+
+cd "$REPO_DIR"
+
+# --- Setup (uv, venv, deps, dataset, tokenizer) ---
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+[ -d ".venv" ] || uv venv
+uv sync --extra gpu
+source .venv/bin/activate
+
+python -m nanochat.dataset -n 100  # Karpathy uses 1000 for his d12-d26 miniseries but says it "can probably be reduced, TODO". ~100 shards (~10GB) is our estimate for d12 alone.
+TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
+if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
+    echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
+else
+    python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
+fi
+
+# -----------------------------------------------------------------------------
+# Configuration
+SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
+DEPTH=12   # Smallest depth Karpathy recommends for meaningful experiments
+TAG="${SERIES_NAME}_baseline_muon"
+
+RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
+mkdir -p "$RESULTS_DIR"
+LOG="$RESULTS_DIR/${TAG}.log"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running baseline Muon+AdamW (d${DEPTH})"
+START=$(date +%s)
+
+python -m scripts.base_train \
+    --depth=$DEPTH \
+    --run="${SERIES_NAME}_isometry" \
+    --model-tag="${TAG}" \
+    --weight-decay=0.2 \
+    --core-metric-every=999999 \
+    --sample-every=-1 \
+    --save-every=-1 \
+    2>&1 | tee "$LOG"
+
+END=$(date +%s)
+ELAPSED=$((END - START))
+VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] baseline_muon: bpb=$VAL_BPB, time=${ELAPSED}s"
+
+# Save results
+RESULTS_FILE="$RESULTS_DIR/results.csv"
+if [ ! -f "$RESULTS_FILE" ]; then
+    echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
+fi
+echo "baseline_muon,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
