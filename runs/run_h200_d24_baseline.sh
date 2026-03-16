@@ -80,7 +80,7 @@ START=$(date +%s)
 # d24: 8 GPUs, FP8, slightly undertrained (ratio=9.5) following speedrun.sh
 torchrun --standalone --nproc_per_node=8 -m scripts.base_train \
     --depth=$DEPTH \
-    --target-param-data-ratio=9.5 \
+    --target-param-data-ratio=8 \
     --device-batch-size=16 \
     --fp8 \
     --run="${SERIES_NAME}_isometry" \
