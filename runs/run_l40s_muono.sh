@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-l40s-adamo
-#SBATCH --time=12:00:00
+#SBATCH --job-name=nanochat-l40s-muono
+#SBATCH --time=36:00:00
 #SBATCH --gres=shard:4
 #SBATCH -M anansi
 #SBATCH -p ada_gpu
@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
-# d12 MuonO experiments on 1xL40S (Ada Lovelace).
+# d12 MuonO experiments on 1×L40S (Ada Lovelace, full GPU via 4 shards).
 # No FP8 (requires Hopper SM9.0+). BF16 auto-detected.
 # Runs 3 variants sequentially: decoupled, relu-scaled, coupled.
 #
@@ -77,7 +77,7 @@ run_exp() {
     log "Running: $NAME"
     START=$(date +%s)
 
-    torchrun --standalone --nproc_per_node=4 -m scripts.base_train \
+    python -m scripts.base_train \
         --depth=$DEPTH \
         --run="${SERIES_NAME}_isometry" \
         --model-tag="${TAG}" \
@@ -95,7 +95,7 @@ run_exp() {
 }
 
 log "=================================================="
-log "${SERIES_NAME} L40S MuonO Experiments (d${DEPTH}, 4×L40S, BF16)"
+log "${SERIES_NAME} L40S MuonO Experiments (d${DEPTH}, 1×L40S, BF16)"
 log "=================================================="
 
 # 1) MuonO: Muon + decoupled ortho reg, no weight decay

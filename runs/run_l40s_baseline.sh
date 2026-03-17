@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-l40s-adamo
+#SBATCH --job-name=nanochat-l40s-base
 #SBATCH --time=12:00:00
 #SBATCH --gres=shard:4
 #SBATCH -M anansi
@@ -8,9 +8,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
-# d12 Baseline experiment on 1xL40S (Ada Lovelace).
+# d12 Baseline experiment on 1×L40S (Ada Lovelace, full GPU via 4 shards).
 # No FP8 (requires Hopper SM9.0+). BF16 auto-detected (L40S SM8.9 supports it).
-# Uses torchrun with 4 GPUs across 1 node.
 #
 # Usage:
 #   sbatch runs/run_l40s_baseline.sh
@@ -67,10 +66,10 @@ RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d${DEPTH} baseline Muon+AdamW (4×L40S, BF16)"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d${DEPTH} baseline Muon+AdamW (1×L40S, BF16)"
 START=$(date +%s)
 
-torchrun --standalone --nproc_per_node=4 -m scripts.base_train \
+python -m scripts.base_train \
     --depth=$DEPTH \
     --run="${SERIES_NAME}_isometry" \
     --model-tag="${TAG}" \
