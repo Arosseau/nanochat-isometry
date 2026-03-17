@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=nanochat-l40s-adamo
-#SBATCH --time=36:00:00
-#SBATCH --gpus=4
-#SBATCH -M hydra
-#SBATCH -p gpu_l40s              # TODO: check correct partition name on your cluster
+#SBATCH --time=12:00:00
+#SBATCH --gres=shard:4
+#SBATCH -M anansi
+#SBATCH -p ada_gpu
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 
-# d12 AdamO experiments on 4×L40S (Ada Lovelace).
+# d12 AdamO experiments on 1×L40S (Ada Lovelace).
 # No FP8 (requires Hopper SM9.0+). BF16 auto-detected.
 # Runs 3 variants sequentially: adamo, adamo+relu, adamw baseline.
 #
