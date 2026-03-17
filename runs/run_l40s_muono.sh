@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=nanochat-l40s-muono
-#SBATCH --time=36:00:00
+#SBATCH --time=12:00:00
 #SBATCH --gres=shard:4
 #SBATCH -M anansi
 #SBATCH -p ada_gpu
