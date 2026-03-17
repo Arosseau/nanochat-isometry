@@ -56,6 +56,10 @@ fi
 cd "$REPO_DIR"
 
 # --- Setup (uv, venv, deps, dataset, tokenizer) ---
+export UV_INSTALL_DIR="${SCRATCH_BASE}/bin"
+export UV_CACHE_DIR="${SCRATCH_BASE}/.uv_cache"
+mkdir -p "$UV_INSTALL_DIR" "$UV_CACHE_DIR"
+export PATH="${UV_INSTALL_DIR}:${HOME}/.local/bin:${PATH}"
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
