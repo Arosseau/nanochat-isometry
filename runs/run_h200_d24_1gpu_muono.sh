@@ -33,7 +33,7 @@ GITHUB_TOKEN="${GITHUB_TOKEN:?Must set GITHUB_TOKEN in secrets.sh}"
 REPO_OWNER="Arosseau"
 REPO_NAME="nanochat-isometry"
 REPO_URL="https://oauth2:${GITHUB_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
-REPO_DIR="${SCRATCH_BASE}/${REPO_NAME}"
+REPO_DIR="${SCRATCH_BASE}"
 
 if [ ! -d "$REPO_DIR/.git" ]; then
     git clone "$REPO_URL" "$REPO_DIR"
