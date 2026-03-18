@@ -74,6 +74,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d${DEPTH} baseline Muon+AdamW (1×L
 START=$(date +%s)
 
 python -m scripts.base_train \
+    --window-pattern=L \
     --depth=$DEPTH \
     --run="${SERIES_NAME}_isometry" \
     --model-tag="${TAG}" \

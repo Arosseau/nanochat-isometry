@@ -82,6 +82,7 @@ run_exp() {
     START=$(date +%s)
 
     python -m scripts.base_train \
+    --window-pattern=L \
         --depth=$DEPTH \
         --run="${SERIES_NAME}_isometry" \
         --model-tag="${TAG}" \
