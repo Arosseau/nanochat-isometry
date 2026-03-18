@@ -51,6 +51,8 @@ export PATH="${UV_INSTALL_DIR}:${HOME}/.local/bin:${PATH}"
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
+# Install FA2 for sliding window support on Ada/L40S (compiled against local CUDA)
+pip install flash-attn --no-build-isolation --quiet
 source .venv/bin/activate
 
 python -m nanochat.dataset -n 100
@@ -74,7 +76,6 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d${DEPTH} baseline Muon+AdamW (1×L
 START=$(date +%s)
 
 python -m scripts.base_train \
-    --window-pattern=L \
     --depth=$DEPTH \
     --run="${SERIES_NAME}_isometry" \
     --model-tag="${TAG}" \
