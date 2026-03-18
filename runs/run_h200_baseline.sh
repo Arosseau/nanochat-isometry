@@ -101,3 +101,26 @@ if [ ! -f "$RESULTS_FILE" ]; then
     echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
 fi
 echo "baseline_muon,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+
+# --- No weight decay baseline (control for ortho reg experiments) ---
+TAG="${SERIES_NAME}_baseline_muon_nowd"
+LOG="$RESULTS_DIR/${TAG}.log"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running baseline Muon+AdamW no weight decay (d${DEPTH})"
+START=$(date +%s)
+
+python -m scripts.base_train \
+    --depth=$DEPTH \
+    --run="${SERIES_NAME}_isometry" \
+    --model-tag="${TAG}" \
+    --weight-decay=0.0 \
+    --core-metric-every=999999 \
+    --sample-every=-1 \
+    --save-every=-1 \
+    2>&1 | tee "$LOG"
+
+END=$(date +%s)
+ELAPSED=$((END - START))
+VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] baseline_muon_nowd: bpb=$VAL_BPB, time=${ELAPSED}s"
+echo "baseline_muon_nowd,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
