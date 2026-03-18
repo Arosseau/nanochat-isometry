@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=nanochat-d24-base
-#SBATCH --time=12:00:00
-#SBATCH --gpus=8
+#SBATCH --time=16:00:00
+#SBATCH --gpus=1
 #SBATCH -M hydra
 #SBATCH -p hopper_gpu
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=256G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
 
 # d24 Baseline experiment: Karpathy's default Muon+AdamW with weight decay.
-# Uses 8×H200 GPUs with torchrun, FP8 training, and ~170 data shards.
+# Uses 1×H200 GPU, FP8 training, and ~170 data shards.
 # Following speedrun.sh best practices for d24.
 #
 # Usage:
@@ -78,11 +78,11 @@ RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d24 baseline Muon+AdamW (8×H200, FP8)"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d24 baseline Muon+AdamW (1×H200, FP8)"
 START=$(date +%s)
 
 # d24: 8 GPUs, FP8, slightly undertrained (ratio=9.5) following speedrun.sh
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train \
+python -m scripts.base_train \
     --depth=$DEPTH \
     --target-param-data-ratio=8 \
     --device-batch-size=16 \

@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=nanochat-d24-adamo
-#SBATCH --time=36:00:00
-#SBATCH --gpus=8
+#SBATCH --time=48:00:00
+#SBATCH --gpus=1
 #SBATCH -M hydra
 #SBATCH -p hopper_gpu
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=256G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
 
 # d24 AdamO experiment: AdamW for ALL parameters + decoupled orthogonal regularization.
 # Replaces Muon entirely with AdamW and uses isometry-promoting regularization
@@ -89,7 +89,7 @@ run_exp() {
     log "Running: $NAME"
     START=$(date +%s)
 
-    torchrun --standalone --nproc_per_node=8 -m scripts.base_train \
+    python -m scripts.base_train \
         --depth=$DEPTH \
         --target-param-data-ratio=8 \
         --device-batch-size=16 \
@@ -110,7 +110,7 @@ run_exp() {
 }
 
 log "=================================================="
-log "${SERIES_NAME} d24 AdamO Experiments (8×H200, FP8)"
+log "${SERIES_NAME} d24 AdamO Experiments (1×H200, FP8)"
 log "=================================================="
 
 # 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
