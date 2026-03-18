@@ -53,8 +53,10 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
 # Install FA2 for sliding window support on Ada/L40S (compiled against local CUDA)
-pip install flash-attn --no-build-isolation --quiet
+
 source .venv/bin/activate
+# Install FA2 for sliding window support on Ada/L40S (must be after venv activation)
+pip install flash-attn --no-build-isolation
 
 python -m nanochat.dataset -n 100
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
