@@ -101,7 +101,7 @@ But honestly: just let `git merge` handle them. Only manually take files when th
 - `nanochat/ortho_reg.py`
 - `nanochat/sv_stats.py`
 - `scripts/plot_sv_stats.py`
-- `runs/run_h200_*.sh` (our runner scripts)
+- `runs/h200_*.sh` (our runner scripts)
 
 ---
 

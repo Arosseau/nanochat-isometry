@@ -14,9 +14,9 @@
 # Runs 3 variants sequentially: decoupled, relu-scaled, coupled.
 #
 # Usage:
-#   sbatch runs/run_h200_d24_1gpu_muono.sh
-#   bash runs/run_h200_d24_1gpu_muono.sh
-#   SERIES_NAME=myexp sbatch runs/run_h200_d24_1gpu_muono.sh
+#   sbatch runs/h200_d24_1gpu_muono.sh
+#   bash runs/h200_d24_1gpu_muono.sh
+#   SERIES_NAME=myexp sbatch runs/h200_d24_1gpu_muono.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"

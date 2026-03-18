@@ -13,9 +13,9 @@
 # Following speedrun.sh best practices for d24.
 #
 # Usage:
-#   sbatch runs/run_h200_d24_baseline.sh
-#   bash runs/run_h200_d24_baseline.sh
-#   SERIES_NAME=myexp sbatch runs/run_h200_d24_baseline.sh
+#   sbatch runs/h200_d24_baseline.sh
+#   bash runs/h200_d24_baseline.sh
+#   SERIES_NAME=myexp sbatch runs/h200_d24_baseline.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"

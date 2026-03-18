@@ -19,9 +19,9 @@
 #   7. adamw_baseline  — AdamW everywhere with standard weight decay (control)
 #
 # Usage:
-#   sbatch runs/run_h200_d12_all.sh
-#   bash runs/run_h200_d12_all.sh
-#   SERIES_NAME=myexp sbatch runs/run_h200_d12_all.sh
+#   sbatch runs/h200_d12_all.sh
+#   bash runs/h200_d12_all.sh
+#   SERIES_NAME=myexp sbatch runs/h200_d12_all.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"

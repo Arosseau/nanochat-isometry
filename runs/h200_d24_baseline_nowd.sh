@@ -1,20 +1,20 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-l40s-base-nowd
-#SBATCH --time=12:00:00
-#SBATCH --gres=shard:4
-#SBATCH -M anansi
-#SBATCH -p ada_gpu
+#SBATCH --job-name=nanochat-d24-base-nowd
+#SBATCH --time=16:00:00
+#SBATCH --gpus=1
+#SBATCH -M hydra
+#SBATCH -p hopper_gpu
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 
-# d12 Baseline: Muon+AdamW WITHOUT weight decay on 1×L40S.
+# d24 Baseline: Muon+AdamW WITHOUT weight decay on 1×H200.
 # Control condition for MuonO/AdamO comparisons (which also use no weight decay).
 #
 # Usage:
-#   sbatch runs/run_l40s_baseline_nowd.sh
-#   bash runs/run_l40s_baseline_nowd.sh
-#   SERIES_NAME=myexp sbatch runs/run_l40s_baseline_nowd.sh
+#   sbatch runs/h200_d24_baseline_nowd.sh
+#   bash runs/h200_d24_baseline_nowd.sh
+#   SERIES_NAME=myexp sbatch runs/h200_d24_baseline_nowd.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
@@ -51,10 +51,9 @@ export PATH="${UV_INSTALL_DIR}:${HOME}/.local/bin:${PATH}"
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
-pip install flash-attn --no-build-isolation --quiet
 source .venv/bin/activate
 
-python -m nanochat.dataset -n 100
+python -m nanochat.dataset -n 170
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
 if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
     echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
@@ -64,19 +63,21 @@ fi
 
 # -----------------------------------------------------------------------------
 SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
-DEPTH=12
-TAG="${SERIES_NAME}_l40s_baseline_muon_nowd"
+DEPTH=24
+TAG="${SERIES_NAME}_d24_baseline_muon_nowd"
 
 RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running baseline Muon+AdamW no weight decay (d${DEPTH}, 1×L40S)"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d24 baseline Muon+AdamW no weight decay (1×H200, FP8)"
 START=$(date +%s)
 
 python -m scripts.base_train \
-    --window-pattern=L \
     --depth=$DEPTH \
+    --target-param-data-ratio=8 \
+    --device-batch-size=16 \
+    --fp8 \
     --run="${SERIES_NAME}_isometry" \
     --model-tag="${TAG}" \
     --weight-decay=0.0 \
@@ -88,8 +89,8 @@ python -m scripts.base_train \
 END=$(date +%s)
 ELAPSED=$((END - START))
 VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] l40s_baseline_muon_nowd: bpb=$VAL_BPB, time=${ELAPSED}s"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] d24_baseline_muon_nowd: bpb=$VAL_BPB, time=${ELAPSED}s"
 
 RESULTS_FILE="$RESULTS_DIR/results.csv"
 [ ! -f "$RESULTS_FILE" ] && echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
-echo "l40s_baseline_muon_nowd,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+echo "d24_baseline_muon_nowd,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"

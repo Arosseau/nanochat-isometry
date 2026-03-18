@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-muono
-#SBATCH --time=6:00:00
+#SBATCH --job-name=nanochat-d24-adamo
+#SBATCH --time=48:00:00
 #SBATCH --gpus=1
 #SBATCH -M hydra
 #SBATCH -p hopper_gpu
@@ -8,14 +8,14 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 
-# MuonO experiment: Muon + decoupled orthogonal regularization for 2D matrix params,
-# with AdamW for 1D params (embeddings, scalars). Replaces weight decay with isometry-
-# promoting regularization while keeping Muon's Polar Express momentum.
+# d24 AdamO experiment: AdamW for ALL parameters + decoupled orthogonal regularization.
+# Replaces Muon entirely with AdamW and uses isometry-promoting regularization
+# instead of standard weight decay on matrix parameters. 8×H200 GPUs with FP8.
 #
 # Usage:
-#   sbatch runs/run_h200_muono.sh
-#   bash runs/run_h200_muono.sh
-#   SERIES_NAME=myexp sbatch runs/run_h200_muono.sh
+#   sbatch runs/h200_d24_adamo.sh
+#   bash runs/h200_d24_adamo.sh
+#   SERIES_NAME=myexp sbatch runs/h200_d24_adamo.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
@@ -59,7 +59,7 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --extra gpu
 source .venv/bin/activate
 
-python -m nanochat.dataset -n 100  # Karpathy uses 1000 for his d12-d26 miniseries but says it "can probably be reduced, TODO". ~100 shards (~10GB) is our estimate for d12 alone.
+python -m nanochat.dataset -n 170
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
 if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
     echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
@@ -70,7 +70,7 @@ fi
 # -----------------------------------------------------------------------------
 # Configuration
 SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
-DEPTH=12
+DEPTH=24
 RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
@@ -83,7 +83,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 run_exp() {
     local NAME="$1"
     shift
-    local TAG="${SERIES_NAME}_muono_${NAME}"
+    local TAG="${SERIES_NAME}_d24_adamo_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
     log "Running: $NAME"
@@ -91,6 +91,9 @@ run_exp() {
 
     python -m scripts.base_train \
         --depth=$DEPTH \
+        --target-param-data-ratio=8 \
+        --device-batch-size=16 \
+        --fp8 \
         --run="${SERIES_NAME}_isometry" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
@@ -107,29 +110,34 @@ run_exp() {
 }
 
 log "=================================================="
-log "${SERIES_NAME} MuonO Experiments (d${DEPTH})"
+log "${SERIES_NAME} d24 AdamO Experiments (1×H200, FP8)"
 log "=================================================="
 
-# 1) MuonO: Muon + decoupled ortho reg, no weight decay
-run_exp "muono" \
+# 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
+run_exp "adamo" \
+    --optimizer=adamw \
+    --matrix-lr=3e-4 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
 
-# 2) MuonO with ReLU activation scale (2.0) to compensate relu^2 signal loss
-run_exp "muono_relu" \
+# 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
+run_exp "adamo_relu" \
+    --optimizer=adamw \
+    --matrix-lr=3e-4 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled \
     --orth-reg-activation-scale=2.0
 
-# 3) MuonO coupled (auxiliary loss, gradients flow through Muon moments)
-run_exp "muono_coupled" \
-    --weight-decay=0.0 \
-    --orth-reg-lambda=1e-3
+# 3) AdamW baseline (standard weight decay, no ortho reg) as control
+run_exp "adamw_baseline" \
+    --optimizer=adamw \
+    --matrix-lr=3e-4 \
+    --weight-decay=0.01
 
 log "=================================================="
-log "MuonO experiments complete!"
+log "d24 AdamO experiments complete!"
 log "=================================================="
 log "Results saved to: $RESULTS_FILE"
 echo ""

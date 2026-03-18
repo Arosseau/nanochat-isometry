@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-d24-adamo
-#SBATCH --time=48:00:00
+#SBATCH --job-name=nanochat-adamo
+#SBATCH --time=6:00:00
 #SBATCH --gpus=1
 #SBATCH -M hydra
 #SBATCH -p hopper_gpu
@@ -8,14 +8,14 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 
-# d24 AdamO experiment: AdamW for ALL parameters + decoupled orthogonal regularization.
+# AdamO experiment: AdamW for ALL parameters + decoupled orthogonal regularization.
 # Replaces Muon entirely with AdamW and uses isometry-promoting regularization
-# instead of standard weight decay on matrix parameters. 8×H200 GPUs with FP8.
+# instead of standard weight decay on matrix parameters.
 #
 # Usage:
-#   sbatch runs/run_h200_d24_adamo.sh
-#   bash runs/run_h200_d24_adamo.sh
-#   SERIES_NAME=myexp sbatch runs/run_h200_d24_adamo.sh
+#   sbatch runs/h200_adamo.sh
+#   bash runs/h200_adamo.sh
+#   SERIES_NAME=myexp sbatch runs/h200_adamo.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
@@ -59,7 +59,7 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --extra gpu
 source .venv/bin/activate
 
-python -m nanochat.dataset -n 170
+python -m nanochat.dataset -n 100  # Karpathy uses 1000 for his d12-d26 miniseries but says it "can probably be reduced, TODO". ~100 shards (~10GB) is our estimate for d12 alone.
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
 if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
     echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
@@ -70,7 +70,7 @@ fi
 # -----------------------------------------------------------------------------
 # Configuration
 SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
-DEPTH=24
+DEPTH=12
 RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
@@ -83,7 +83,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 run_exp() {
     local NAME="$1"
     shift
-    local TAG="${SERIES_NAME}_d24_adamo_${NAME}"
+    local TAG="${SERIES_NAME}_adamo_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
     log "Running: $NAME"
@@ -91,9 +91,6 @@ run_exp() {
 
     python -m scripts.base_train \
         --depth=$DEPTH \
-        --target-param-data-ratio=8 \
-        --device-batch-size=16 \
-        --fp8 \
         --run="${SERIES_NAME}_isometry" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
@@ -110,7 +107,7 @@ run_exp() {
 }
 
 log "=================================================="
-log "${SERIES_NAME} d24 AdamO Experiments (1×H200, FP8)"
+log "${SERIES_NAME} AdamO Experiments (d${DEPTH})"
 log "=================================================="
 
 # 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
@@ -137,7 +134,7 @@ run_exp "adamw_baseline" \
     --weight-decay=0.01
 
 log "=================================================="
-log "d24 AdamO experiments complete!"
+log "AdamO experiments complete!"
 log "=================================================="
 log "Results saved to: $RESULTS_FILE"
 echo ""

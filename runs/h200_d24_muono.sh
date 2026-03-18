@@ -1,21 +1,21 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-l40s-adamo
-#SBATCH --time=12:00:00
-#SBATCH --gres=shard:4
-#SBATCH -M anansi
-#SBATCH -p ada_gpu
+#SBATCH --job-name=nanochat-d24-muono
+#SBATCH --time=48:00:00
+#SBATCH --gpus=1
+#SBATCH -M hydra
+#SBATCH -p hopper_gpu
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 
-# d12 AdamO experiments on 1×L40S (Ada Lovelace, full GPU via 4 shards).
-# No FP8 (requires Hopper SM9.0+). BF16 auto-detected.
-# Runs 3 variants sequentially: adamo, adamo+relu, adamw baseline.
+# d24 MuonO experiment: Muon + decoupled orthogonal regularization for 2D matrix params,
+# with AdamW for 1D params (embeddings, scalars). 8×H200 GPUs with FP8 training.
+# Runs 3 variants sequentially: decoupled, relu-scaled, coupled.
 #
 # Usage:
-#   sbatch runs/run_l40s_adamo.sh
-#   bash runs/run_l40s_adamo.sh
-#   SERIES_NAME=myexp sbatch runs/run_l40s_adamo.sh
+#   sbatch runs/h200_d24_muono.sh
+#   bash runs/h200_d24_muono.sh
+#   SERIES_NAME=myexp sbatch runs/h200_d24_muono.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
@@ -25,6 +25,7 @@ mkdir -p "$SCRATCH_BASE" "$NANOCHAT_BASE_DIR"
 module purge
 module load Python/3.11.3-GCCcore-12.3.0
 
+# Load secrets (WANDB_API_KEY, GITHUB_TOKEN)
 source "${SCRATCH_BASE}/secrets.sh"
 export WANDB_API_KEY
 
@@ -34,9 +35,12 @@ REPO_NAME="nanochat-isometry"
 REPO_URL="https://oauth2:${GITHUB_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
 REPO_DIR="${SCRATCH_BASE}"
 
+# --- Clone if missing, otherwise pull latest ---
 if [ ! -d "$REPO_DIR/.git" ]; then
+    echo "Cloning ${REPO_NAME}..."
     git clone "$REPO_URL" "$REPO_DIR"
 else
+    echo "Repo exists — pulling latest changes..."
     cd "$REPO_DIR"
     git reset --hard HEAD
     git clean -fd
@@ -45,6 +49,7 @@ fi
 
 cd "$REPO_DIR"
 
+# --- Setup (uv, venv, deps, dataset, tokenizer) ---
 export UV_INSTALL_DIR="${SCRATCH_BASE}/bin"
 export UV_CACHE_DIR="${SCRATCH_BASE}/.uv_cache"
 mkdir -p "$UV_INSTALL_DIR" "$UV_CACHE_DIR"
@@ -52,11 +57,9 @@ export PATH="${UV_INSTALL_DIR}:${HOME}/.local/bin:${PATH}"
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
-# Install FA2 for sliding window support on Ada/L40S (compiled against local CUDA)
-pip install flash-attn --no-build-isolation --quiet
 source .venv/bin/activate
 
-python -m nanochat.dataset -n 100
+python -m nanochat.dataset -n 170
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
 if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
     echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
@@ -65,19 +68,22 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Configuration
 SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
-DEPTH=12
+DEPTH=24
 RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
-[ ! -f "$RESULTS_FILE" ] && echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
+if [ ! -f "$RESULTS_FILE" ]; then
+    echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
+fi
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 run_exp() {
     local NAME="$1"
     shift
-    local TAG="${SERIES_NAME}_l40s_adamo_${NAME}"
+    local TAG="${SERIES_NAME}_d24_muono_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
     log "Running: $NAME"
@@ -85,6 +91,9 @@ run_exp() {
 
     python -m scripts.base_train \
         --depth=$DEPTH \
+        --target-param-data-ratio=8 \
+        --device-batch-size=16 \
+        --fp8 \
         --run="${SERIES_NAME}_isometry" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
@@ -97,38 +106,33 @@ run_exp() {
     ELAPSED=$((END - START))
     VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
     log "  $NAME: bpb=$VAL_BPB, time=${ELAPSED}s"
-    echo "l40s_${NAME},$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+    echo "$NAME,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
 }
 
 log "=================================================="
-log "${SERIES_NAME} L40S AdamO Experiments (d${DEPTH}, 1×L40S, BF16)"
+log "${SERIES_NAME} d24 MuonO Experiments (1×H200, FP8)"
 log "=================================================="
 
-# 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
-run_exp "adamo" \
-    --optimizer=adamw \
-    --matrix-lr=3e-4 \
+# 1) MuonO: Muon + decoupled ortho reg, no weight decay
+run_exp "muono" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
 
-# 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
-run_exp "adamo_relu" \
-    --optimizer=adamw \
-    --matrix-lr=3e-4 \
+# 2) MuonO with ReLU activation scale (2.0) to compensate relu^2 signal loss
+run_exp "muono_relu" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled \
     --orth-reg-activation-scale=2.0
 
-# 3) AdamW baseline (standard weight decay, no ortho reg) as control
-run_exp "adamw_baseline" \
-    --optimizer=adamw \
-    --matrix-lr=3e-4 \
-    --weight-decay=0.01
+# 3) MuonO coupled (auxiliary loss, gradients flow through Muon moments)
+run_exp "muono_coupled" \
+    --weight-decay=0.0 \
+    --orth-reg-lambda=1e-3
 
 log "=================================================="
-log "L40S AdamO experiments complete!"
+log "d24 MuonO experiments complete!"
 log "=================================================="
 log "Results saved to: $RESULTS_FILE"
 echo ""

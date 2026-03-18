@@ -1,22 +1,21 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-d24-1gpu-adamo
-#SBATCH --time=72:00:00
-#SBATCH --gpus=1
-#SBATCH -M hydra
-#SBATCH -p hopper_gpu
+#SBATCH --job-name=nanochat-l40s-adamo
+#SBATCH --time=12:00:00
+#SBATCH --gres=shard:4
+#SBATCH -M anansi
+#SBATCH -p ada_gpu
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
-# d24 AdamO experiments on a single H200.
-# Same as run_h200_d24_adamo.sh but 1 GPU — no torchrun, ~8x slower wall clock.
-# FP8 still enabled (H200 Hopper SM9.0 supports it).
+# d12 AdamO experiments on 1×L40S (Ada Lovelace, full GPU via 4 shards).
+# No FP8 (requires Hopper SM9.0+). BF16 auto-detected.
 # Runs 3 variants sequentially: adamo, adamo+relu, adamw baseline.
 #
 # Usage:
-#   sbatch runs/run_h200_d24_1gpu_adamo.sh
-#   bash runs/run_h200_d24_1gpu_adamo.sh
-#   SERIES_NAME=myexp sbatch runs/run_h200_d24_1gpu_adamo.sh
+#   sbatch runs/l40s_adamo.sh
+#   bash runs/l40s_adamo.sh
+#   SERIES_NAME=myexp sbatch runs/l40s_adamo.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
@@ -53,9 +52,11 @@ export PATH="${UV_INSTALL_DIR}:${HOME}/.local/bin:${PATH}"
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
+# Install FA2 for sliding window support on Ada/L40S (compiled against local CUDA)
+pip install flash-attn --no-build-isolation --quiet
 source .venv/bin/activate
 
-python -m nanochat.dataset -n 170
+python -m nanochat.dataset -n 100
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
 if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
     echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
@@ -65,7 +66,7 @@ fi
 
 # -----------------------------------------------------------------------------
 SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
-DEPTH=24
+DEPTH=12
 RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
@@ -76,7 +77,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 run_exp() {
     local NAME="$1"
     shift
-    local TAG="${SERIES_NAME}_d24_1gpu_adamo_${NAME}"
+    local TAG="${SERIES_NAME}_l40s_adamo_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
     log "Running: $NAME"
@@ -84,9 +85,6 @@ run_exp() {
 
     python -m scripts.base_train \
         --depth=$DEPTH \
-        --target-param-data-ratio=8 \
-        --device-batch-size=16 \
-        --fp8 \
         --run="${SERIES_NAME}_isometry" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
@@ -99,13 +97,14 @@ run_exp() {
     ELAPSED=$((END - START))
     VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
     log "  $NAME: bpb=$VAL_BPB, time=${ELAPSED}s"
-    echo "d24_1gpu_${NAME},$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+    echo "l40s_${NAME},$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
 }
 
 log "=================================================="
-log "${SERIES_NAME} d24 AdamO Experiments (1×H200, FP8)"
+log "${SERIES_NAME} L40S AdamO Experiments (d${DEPTH}, 1×L40S, BF16)"
 log "=================================================="
 
+# 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
 run_exp "adamo" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
@@ -113,6 +112,7 @@ run_exp "adamo" \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
 
+# 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
 run_exp "adamo_relu" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
@@ -121,13 +121,14 @@ run_exp "adamo_relu" \
     --orth-reg-decoupled \
     --orth-reg-activation-scale=2.0
 
+# 3) AdamW baseline (standard weight decay, no ortho reg) as control
 run_exp "adamw_baseline" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.01
 
 log "=================================================="
-log "d24 1×H200 AdamO experiments complete!"
+log "L40S AdamO experiments complete!"
 log "=================================================="
 log "Results saved to: $RESULTS_FILE"
 echo ""

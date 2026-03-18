@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-adamo
-#SBATCH --time=6:00:00
+#SBATCH --job-name=nanochat-d24-1gpu-adamo
+#SBATCH --time=72:00:00
 #SBATCH --gpus=1
 #SBATCH -M hydra
 #SBATCH -p hopper_gpu
@@ -8,14 +8,15 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 
-# AdamO experiment: AdamW for ALL parameters + decoupled orthogonal regularization.
-# Replaces Muon entirely with AdamW and uses isometry-promoting regularization
-# instead of standard weight decay on matrix parameters.
+# d24 AdamO experiments on a single H200.
+# Same as run_h200_d24_adamo.sh but 1 GPU — no torchrun, ~8x slower wall clock.
+# FP8 still enabled (H200 Hopper SM9.0 supports it).
+# Runs 3 variants sequentially: adamo, adamo+relu, adamw baseline.
 #
 # Usage:
-#   sbatch runs/run_h200_adamo.sh
-#   bash runs/run_h200_adamo.sh
-#   SERIES_NAME=myexp sbatch runs/run_h200_adamo.sh
+#   sbatch runs/h200_d24_1gpu_adamo.sh
+#   bash runs/h200_d24_1gpu_adamo.sh
+#   SERIES_NAME=myexp sbatch runs/h200_d24_1gpu_adamo.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
@@ -25,7 +26,6 @@ mkdir -p "$SCRATCH_BASE" "$NANOCHAT_BASE_DIR"
 module purge
 module load Python/3.11.3-GCCcore-12.3.0
 
-# Load secrets (WANDB_API_KEY, GITHUB_TOKEN)
 source "${SCRATCH_BASE}/secrets.sh"
 export WANDB_API_KEY
 
@@ -35,12 +35,9 @@ REPO_NAME="nanochat-isometry"
 REPO_URL="https://oauth2:${GITHUB_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
 REPO_DIR="${SCRATCH_BASE}"
 
-# --- Clone if missing, otherwise pull latest ---
 if [ ! -d "$REPO_DIR/.git" ]; then
-    echo "Cloning ${REPO_NAME}..."
     git clone "$REPO_URL" "$REPO_DIR"
 else
-    echo "Repo exists — pulling latest changes..."
     cd "$REPO_DIR"
     git reset --hard HEAD
     git clean -fd
@@ -49,7 +46,6 @@ fi
 
 cd "$REPO_DIR"
 
-# --- Setup (uv, venv, deps, dataset, tokenizer) ---
 export UV_INSTALL_DIR="${SCRATCH_BASE}/bin"
 export UV_CACHE_DIR="${SCRATCH_BASE}/.uv_cache"
 mkdir -p "$UV_INSTALL_DIR" "$UV_CACHE_DIR"
@@ -59,7 +55,7 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --extra gpu
 source .venv/bin/activate
 
-python -m nanochat.dataset -n 100  # Karpathy uses 1000 for his d12-d26 miniseries but says it "can probably be reduced, TODO". ~100 shards (~10GB) is our estimate for d12 alone.
+python -m nanochat.dataset -n 170
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
 if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
     echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
@@ -68,22 +64,19 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Configuration
 SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
-DEPTH=12
+DEPTH=24
 RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
-if [ ! -f "$RESULTS_FILE" ]; then
-    echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
-fi
+[ ! -f "$RESULTS_FILE" ] && echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 run_exp() {
     local NAME="$1"
     shift
-    local TAG="${SERIES_NAME}_adamo_${NAME}"
+    local TAG="${SERIES_NAME}_d24_1gpu_adamo_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
     log "Running: $NAME"
@@ -91,6 +84,9 @@ run_exp() {
 
     python -m scripts.base_train \
         --depth=$DEPTH \
+        --target-param-data-ratio=8 \
+        --device-batch-size=16 \
+        --fp8 \
         --run="${SERIES_NAME}_isometry" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
@@ -103,14 +99,13 @@ run_exp() {
     ELAPSED=$((END - START))
     VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
     log "  $NAME: bpb=$VAL_BPB, time=${ELAPSED}s"
-    echo "$NAME,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+    echo "d24_1gpu_${NAME},$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
 }
 
 log "=================================================="
-log "${SERIES_NAME} AdamO Experiments (d${DEPTH})"
+log "${SERIES_NAME} d24 AdamO Experiments (1×H200, FP8)"
 log "=================================================="
 
-# 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
 run_exp "adamo" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
@@ -118,7 +113,6 @@ run_exp "adamo" \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
 
-# 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
 run_exp "adamo_relu" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
@@ -127,14 +121,13 @@ run_exp "adamo_relu" \
     --orth-reg-decoupled \
     --orth-reg-activation-scale=2.0
 
-# 3) AdamW baseline (standard weight decay, no ortho reg) as control
 run_exp "adamw_baseline" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.01
 
 log "=================================================="
-log "AdamO experiments complete!"
+log "d24 1×H200 AdamO experiments complete!"
 log "=================================================="
 log "Results saved to: $RESULTS_FILE"
 echo ""
