@@ -93,27 +93,3 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] l40s_baseline_muon: bpb=$VAL_BPB, time=${EL
 RESULTS_FILE="$RESULTS_DIR/results.csv"
 [ ! -f "$RESULTS_FILE" ] && echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
 echo "l40s_baseline_muon,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
-
-# --- No weight decay baseline (control for ortho reg experiments) ---
-TAG="${SERIES_NAME}_l40s_baseline_muon_nowd"
-LOG="$RESULTS_DIR/${TAG}.log"
-
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running baseline Muon+AdamW no weight decay (d${DEPTH}, 1×L40S)"
-START=$(date +%s)
-
-python -m scripts.base_train \
-    --window-pattern=L \
-    --depth=$DEPTH \
-    --run="${SERIES_NAME}_isometry" \
-    --model-tag="${TAG}" \
-    --weight-decay=0.0 \
-    --core-metric-every=999999 \
-    --sample-every=-1 \
-    --save-every=-1 \
-    2>&1 | tee "$LOG"
-
-END=$(date +%s)
-ELAPSED=$((END - START))
-VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] l40s_baseline_muon_nowd: bpb=$VAL_BPB, time=${ELAPSED}s"
-echo "l40s_baseline_muon_nowd,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"

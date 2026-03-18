@@ -1,20 +1,20 @@
 #!/bin/bash
-#SBATCH --job-name=nanochat-baseline
-#SBATCH --time=6:00:00
-#SBATCH --gpus=1
+#SBATCH --job-name=nanochat-d24-base-nowd
+#SBATCH --time=12:00:00
+#SBATCH --gpus=8
 #SBATCH -M hydra
 #SBATCH -p hopper_gpu
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=256G
 
-# Baseline experiment: Karpathy's default Muon+AdamW with weight decay at d12.
-# This is the control run that our isometry regularization variants compare against.
+# d24 Baseline: Muon+AdamW WITHOUT weight decay on 8×H200.
+# Control condition for MuonO/AdamO comparisons (which also use no weight decay).
 #
 # Usage:
-#   sbatch runs/run_h200_baseline.sh                           # submit to Hydra H200
-#   bash runs/run_h200_baseline.sh                             # run directly (interactive)
-#   SERIES_NAME=myexp sbatch runs/run_h200_baseline.sh
+#   sbatch runs/run_h200_d24_baseline_nowd.sh
+#   bash runs/run_h200_d24_baseline_nowd.sh
+#   SERIES_NAME=myexp sbatch runs/run_h200_d24_baseline_nowd.sh
 
 export OMP_NUM_THREADS=1
 SCRATCH_BASE="${VSC_SCRATCH}/nanochat-isometry"
@@ -24,7 +24,6 @@ mkdir -p "$SCRATCH_BASE" "$NANOCHAT_BASE_DIR"
 module purge
 module load Python/3.11.3-GCCcore-12.3.0
 
-# Load secrets (WANDB_API_KEY, GITHUB_TOKEN)
 source "${SCRATCH_BASE}/secrets.sh"
 export WANDB_API_KEY
 
@@ -34,12 +33,9 @@ REPO_NAME="nanochat-isometry"
 REPO_URL="https://oauth2:${GITHUB_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
 REPO_DIR="${SCRATCH_BASE}"
 
-# --- Clone if missing, otherwise pull latest ---
 if [ ! -d "$REPO_DIR/.git" ]; then
-    echo "Cloning ${REPO_NAME}..."
     git clone "$REPO_URL" "$REPO_DIR"
 else
-    echo "Repo exists — pulling latest changes..."
     cd "$REPO_DIR"
     git reset --hard HEAD
     git clean -fd
@@ -48,7 +44,6 @@ fi
 
 cd "$REPO_DIR"
 
-# --- Setup (uv, venv, deps, dataset, tokenizer) ---
 export UV_INSTALL_DIR="${SCRATCH_BASE}/bin"
 export UV_CACHE_DIR="${SCRATCH_BASE}/.uv_cache"
 mkdir -p "$UV_INSTALL_DIR" "$UV_CACHE_DIR"
@@ -58,7 +53,7 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --extra gpu
 source .venv/bin/activate
 
-python -m nanochat.dataset -n 100  # Karpathy uses 1000 for his d12-d26 miniseries but says it "can probably be reduced, TODO". ~100 shards (~10GB) is our estimate for d12 alone.
+python -m nanochat.dataset -n 170
 TOKENIZER_FILE="$NANOCHAT_BASE_DIR/tokenizer/tokenizer.json"
 if [ "${SKIP_TOKENIZER:-0}" = "1" ] && [ -f "$TOKENIZER_FILE" ]; then
     echo "Tokenizer already exists, skipping (SKIP_TOKENIZER=1)."
@@ -67,23 +62,25 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Configuration
 SERIES_NAME="${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}"
-DEPTH=12   # Smallest depth Karpathy recommends for meaningful experiments
-TAG="${SERIES_NAME}_baseline_muon"
+DEPTH=24
+TAG="${SERIES_NAME}_d24_baseline_muon_nowd"
 
 RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running baseline Muon+AdamW (d${DEPTH})"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d24 baseline Muon+AdamW no weight decay (8×H200, FP8)"
 START=$(date +%s)
 
-python -m scripts.base_train \
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train \
     --depth=$DEPTH \
+    --target-param-data-ratio=8 \
+    --device-batch-size=16 \
+    --fp8 \
     --run="${SERIES_NAME}_isometry" \
     --model-tag="${TAG}" \
-    --weight-decay=0.2 \
+    --weight-decay=0.0 \
     --core-metric-every=999999 \
     --sample-every=-1 \
     --save-every=-1 \
@@ -92,12 +89,8 @@ python -m scripts.base_train \
 END=$(date +%s)
 ELAPSED=$((END - START))
 VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] d24_baseline_muon_nowd: bpb=$VAL_BPB, time=${ELAPSED}s"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] baseline_muon: bpb=$VAL_BPB, time=${ELAPSED}s"
-
-# Save results
 RESULTS_FILE="$RESULTS_DIR/results.csv"
-if [ ! -f "$RESULTS_FILE" ]; then
-    echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
-fi
-echo "baseline_muon,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+[ ! -f "$RESULTS_FILE" ] && echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
+echo "d24_baseline_muon_nowd,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
