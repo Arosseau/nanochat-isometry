@@ -70,7 +70,7 @@ parser.add_argument("--orth-reg-lambda", type=float, default=0.0, help="orthogon
 parser.add_argument("--orth-reg-decoupled", action="store_true", help="use AdamO-style decoupled ortho reg (apply outside optimizer moments). Recommended over coupled mode.")
 parser.add_argument("--orth-reg-lr-scale", type=float, default=1.0, help="η_iso / η ratio for decoupled ortho reg learning rate (default: 1.0 = same as base lr)")
 parser.add_argument("--orth-reg-activation-scale", type=float, default=1.0, help="activation scale s for ortho reg target: W^T W ≈ sI (use 2.0 for ReLU/relu^2 compensation)")
-parser.add_argument("--orth-reg-no-rect-scale", action="store_true", help="disable (out_dim/in_dim) scale correction for tall matrices. By default, tall matrices (out_dim>in_dim) use scale s*(out_dim/in_dim); this flag makes all matrices use s directly.")
+parser.add_argument("--orth-reg-rect-scale", action="store_true", help="enable (out_dim/in_dim) scale correction for tall matrices: target becomes s*(out_dim/in_dim) instead of s. Disabled by default.")
 # Normalization
 parser.add_argument("--norm-mode", type=str, default="rmsnorm", choices=["rmsnorm", "layernorm", "none"], help="normalization mode: rmsnorm (default, parameterless), layernorm (learnable scale/offset), none (skip normalization)")
 parser.add_argument("--freeze-norm", action="store_true", help="freeze LayerNorm parameters at init values (weight=1, bias=0). Only effective with --norm-mode=layernorm.")
@@ -362,7 +362,7 @@ optimizer = model.setup_optimizer(
 
 # Orthogonal regularization setup
 ortho_matrix_params = []
-orth_rect_scale = not args.orth_reg_no_rect_scale
+orth_rect_scale = args.orth_reg_rect_scale
 if args.orth_reg_lambda > 0:
     from nanochat.ortho_reg import get_ortho_reg_params, compute_ortho_reg_loss, apply_decoupled_ortho_reg
     ortho_matrix_params = get_ortho_reg_params(orig_model)
