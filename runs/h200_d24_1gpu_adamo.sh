@@ -75,7 +75,8 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 run_exp() {
     local NAME="$1"
-    shift
+    local WANDB_NAME="$2"
+    shift 2
     local TAG="${SERIES_NAME}_d24_1gpu_adamo_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
@@ -87,7 +88,7 @@ run_exp() {
         --target-param-data-ratio=8 \
         --device-batch-size=16 \
         --fp8 \
-        --run="${SERIES_NAME}_isometry" \
+        --run="${SERIES_NAME} ${WANDB_NAME}" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
         --sample-every=-1 \
@@ -106,14 +107,14 @@ log "=================================================="
 log "${SERIES_NAME} d24 AdamO Experiments (1×H200, FP8)"
 log "=================================================="
 
-run_exp "adamo" \
+run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
 
-run_exp "adamo_relu" \
+run_exp "adamo_relu" "adamo 1e-3 decoupled relu no-wd" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.0 \
@@ -121,7 +122,7 @@ run_exp "adamo_relu" \
     --orth-reg-decoupled \
     --orth-reg-activation-scale=2.0
 
-run_exp "adamw_baseline" \
+run_exp "adamw_baseline" "adamw wd=0.01" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.01

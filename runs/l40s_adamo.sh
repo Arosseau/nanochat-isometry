@@ -78,7 +78,8 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 run_exp() {
     local NAME="$1"
-    shift
+    local WANDB_NAME="$2"
+    shift 2
     local TAG="${SERIES_NAME}_l40s_adamo_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
@@ -87,7 +88,7 @@ run_exp() {
 
     python -m scripts.base_train \
         --depth=$DEPTH \
-        --run="${SERIES_NAME}_isometry" \
+        --run="${SERIES_NAME} ${WANDB_NAME}" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
         --sample-every=-1 \
@@ -107,7 +108,7 @@ log "${SERIES_NAME} L40S AdamO Experiments (d${DEPTH}, 1×L40S, BF16)"
 log "=================================================="
 
 # 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
-run_exp "adamo" \
+run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.0 \
@@ -115,7 +116,7 @@ run_exp "adamo" \
     --orth-reg-decoupled
 
 # 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
-run_exp "adamo_relu" \
+run_exp "adamo_relu" "adamo 1e-3 decoupled relu no-wd" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.0 \
@@ -124,7 +125,7 @@ run_exp "adamo_relu" \
     --orth-reg-activation-scale=2.0
 
 # 3) AdamW baseline (standard weight decay, no ortho reg) as control
-run_exp "adamw_baseline" \
+run_exp "adamw_baseline" "adamw wd=0.01" \
     --optimizer=adamw \
     --matrix-lr=3e-4 \
     --weight-decay=0.01

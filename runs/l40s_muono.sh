@@ -8,9 +8,9 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 
-# d12 MuonO experiments on 1×L40S (Ada Lovelace, full GPU via 4 shards).
+# d12 MuonO lambda sweep on 1×L40S (Ada Lovelace, full GPU via 4 shards).
 # No FP8 (requires Hopper SM9.0+). BF16 auto-detected.
-# Runs 3 variants sequentially: decoupled, relu-scaled, coupled.
+# Sweeps lambda: 1e1, 1e2, 1e3 — all decoupled, no weight decay.
 #
 # Usage:
 #   sbatch runs/l40s_muono.sh
@@ -52,8 +52,6 @@ export PATH="${UV_INSTALL_DIR}:${HOME}/.local/bin:${PATH}"
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu
-# Install FA2 for sliding window support on Ada/L40S (compiled against local CUDA)
-
 source .venv/bin/activate
 # Install FA2 for sliding window support on Ada/L40S (must be after venv activation)
 pip install flash-attn --no-build-isolation
@@ -78,7 +76,8 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 run_exp() {
     local NAME="$1"
-    shift
+    local WANDB_NAME="$2"
+    shift 2
     local TAG="${SERIES_NAME}_l40s_muono_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
@@ -87,7 +86,7 @@ run_exp() {
 
     python -m scripts.base_train \
         --depth=$DEPTH \
-        --run="${SERIES_NAME}_isometry" \
+        --run="${SERIES_NAME} ${WANDB_NAME}" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
         --sample-every=-1 \
@@ -106,21 +105,20 @@ log "=================================================="
 log "${SERIES_NAME} L40S MuonO Experiments (d${DEPTH}, 1×L40S, BF16)"
 log "=================================================="
 
-run_exp "muono_decoupled" \
+run_exp "muono_1e1" "muono 1e1 decoupled no-wd" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e1 \
     --orth-reg-decoupled
 
-run_exp "muono_decoupled" \
+run_exp "muono_1e2" "muono 1e2 decoupled no-wd" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e2 \
-    --orth-reg-decoupled \
-    # --orth-reg-activation-scale=2.0
+    --orth-reg-decoupled
 
-run_exp "muono_decoupled" \
+run_exp "muono_1e3" "muono 1e3 decoupled no-wd" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e3 \
-    --orth-reg-decoupled \
+    --orth-reg-decoupled
 
 
 log "=================================================="

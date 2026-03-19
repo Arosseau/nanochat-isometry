@@ -75,7 +75,8 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
 
 run_exp() {
     local NAME="$1"
-    shift
+    local WANDB_NAME="$2"
+    shift 2
     local TAG="${SERIES_NAME}_d24_1gpu_muono_${NAME}"
     local LOG="$RESULTS_DIR/${TAG}.log"
 
@@ -87,7 +88,7 @@ run_exp() {
         --target-param-data-ratio=8 \
         --device-batch-size=16 \
         --fp8 \
-        --run="${SERIES_NAME}_isometry" \
+        --run="${SERIES_NAME} ${WANDB_NAME}" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \
         --sample-every=-1 \
@@ -106,18 +107,18 @@ log "=================================================="
 log "${SERIES_NAME} d24 MuonO Experiments (1×H200, FP8)"
 log "=================================================="
 
-run_exp "muono" \
+run_exp "muono" "muono 1e-3 decoupled no-wd" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
 
-run_exp "muono_relu" \
+run_exp "muono_relu" "muono 1e-3 decoupled relu no-wd" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled \
     --orth-reg-activation-scale=2.0
 
-run_exp "muono_coupled" \
+run_exp "muono_coupled" "muono 1e-3 coupled no-wd" \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3
 

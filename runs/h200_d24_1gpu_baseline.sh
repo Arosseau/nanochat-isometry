@@ -79,7 +79,7 @@ python -m scripts.base_train \
     --target-param-data-ratio=8 \
     --device-batch-size=16 \
     --fp8 \
-    --run="${SERIES_NAME}_isometry" \
+    --run="${SERIES_NAME} baseline wd=0.2 d24" \
     --model-tag="${TAG}" \
     --weight-decay=0.2 \
     --core-metric-every=999999 \

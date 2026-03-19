@@ -75,7 +75,7 @@ START=$(date +%s)
 
 python -m scripts.base_train \
     --depth=$DEPTH \
-    --run="${SERIES_NAME}_isometry" \
+    --run="${SERIES_NAME} baseline no-wd" \
     --model-tag="${TAG}" \
     --weight-decay=0.0 \
     --core-metric-every=999999 \
