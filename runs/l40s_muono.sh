@@ -106,23 +106,22 @@ log "=================================================="
 log "${SERIES_NAME} L40S MuonO Experiments (d${DEPTH}, 1×L40S, BF16)"
 log "=================================================="
 
-# 1) MuonO: Muon + decoupled ortho reg, no weight decay
-run_exp "muono" \
+run_exp "muono_decoupled" \
     --weight-decay=0.0 \
-    --orth-reg-lambda=1e-3 \
+    --orth-reg-lambda=1e1 \
     --orth-reg-decoupled
 
-# 2) MuonO with ReLU activation scale (2.0) to compensate relu^2 signal loss
-run_exp "muono_relu" \
+run_exp "muono_decoupled" \
     --weight-decay=0.0 \
-    --orth-reg-lambda=1e-3 \
+    --orth-reg-lambda=1e2 \
     --orth-reg-decoupled \
-    --orth-reg-activation-scale=2.0
+    # --orth-reg-activation-scale=2.0
 
-# 3) MuonO coupled (auxiliary loss, gradients flow through Muon moments)
-run_exp "muono_coupled" \
+run_exp "muono_decoupled" \
     --weight-decay=0.0 \
-    --orth-reg-lambda=1e-3
+    --orth-reg-lambda=1e3 \
+    --orth-reg-decoupled \
+
 
 log "=================================================="
 log "L40S MuonO experiments complete!"
