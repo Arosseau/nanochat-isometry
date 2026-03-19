@@ -40,7 +40,7 @@ print_banner()
 # CLI arguments
 parser = argparse.ArgumentParser(description="Pretrain base model")
 # Logging
-parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
+parser.add_argument("--run", type=str, default=None, help="wandb run name (None = auto-generate, 'dummy' = disable wandb)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # FP8 training
@@ -105,6 +105,36 @@ if device_type == "cuda":
 else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+
+# Auto-generate informative wandb run name if not provided
+def _auto_run_name(args):
+    """Build a short, informative run name from training args."""
+    import re
+    def fmt_lambda(lam):
+        s = f"{lam:.0e}"                           # e.g. "1e-03"
+        s = re.sub(r'e([+-])0*(\d+)', r'e\1\2', s) # "1e-03" -> "1e-3"
+        s = s.replace('e+', 'e')                   # "1e+3" -> "1e3"
+        return s
+    parts = []
+    if args.optimizer == 'adamw':
+        if args.orth_reg_lambda > 0:
+            mode = "decoupled" if args.orth_reg_decoupled else "coupled"
+            parts.append(f"adamo {fmt_lambda(args.orth_reg_lambda)} {mode}")
+        else:
+            parts.append("adamw")
+    else:  # muon-adamw
+        if args.orth_reg_lambda > 0:
+            mode = "decoupled" if args.orth_reg_decoupled else "coupled"
+            parts.append(f"muono {fmt_lambda(args.orth_reg_lambda)} {mode}")
+        else:
+            parts.append("baseline")
+    parts.append("no-wd" if args.weight_decay == 0.0 else f"wd={args.weight_decay}")
+    parts.append(f"d{args.depth}")
+    return " ".join(parts)
+
+if args.run is None:
+    # Auto-enable wandb with a descriptive name if WANDB_API_KEY is set
+    args.run = _auto_run_name(args) if os.environ.get('WANDB_API_KEY') else "dummy"
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
