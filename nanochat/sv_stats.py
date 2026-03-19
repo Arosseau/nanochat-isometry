@@ -95,10 +95,19 @@ def _effective_rank(sv2: Tensor) -> float:
     return math.exp(entropy)
 
 
+_NAN_STATS = {'max_sv2': float('nan'), 'min_sv2': float('nan'),
+              'mean_sv2': float('nan'), 'cond': float('nan'), 'eff_rank': float('nan')}
+
+
 def _matrix_stats(param: Tensor) -> dict:
     """Compute all stats for a single weight matrix. param should be 2D."""
     W = param.float()  # fp32 for numerical stability
-    sv = torch.linalg.svdvals(W)  # singular values only — faster than full SVD
+    try:
+        sv = torch.linalg.svdvals(W)  # singular values only — faster than full SVD
+    except Exception:
+        return dict(_NAN_STATS)
+    if not torch.isfinite(sv).all():
+        return dict(_NAN_STATS)
     sv2 = sv ** 2
     min_sv = sv.min().clamp(min=1e-10)
     return {
@@ -111,9 +120,13 @@ def _matrix_stats(param: Tensor) -> dict:
 
 
 def _avg_stats(records: list[dict]) -> dict:
-    """Average each stat key across a list of per-matrix stat dicts."""
+    """Average each stat key across a list of per-matrix stat dicts, skipping NaN entries."""
     keys = ('max_sv2', 'min_sv2', 'mean_sv2', 'cond', 'eff_rank')
-    return {k: sum(r[k] for r in records) / len(records) for k in keys}
+    result = {}
+    for k in keys:
+        vals = [r[k] for r in records if math.isfinite(r[k])]
+        result[k] = sum(vals) / len(vals) if vals else float('nan')
+    return result
 
 
 @torch.no_grad()
@@ -164,11 +177,11 @@ def compute_sv_stats(model: nn.Module) -> dict:
         for k, v in stats.items():
             wandb_dict[f'sv/{wtype}/{k}'] = v
 
-    # Histograms: distribution of key metrics across all matrices
+    # Histograms: distribution of key metrics across all matrices (NaN-filtered)
     histograms = {
-        'cond':     [m['cond']     for m in per_matrix],
-        'eff_rank': [m['eff_rank'] for m in per_matrix],
-        'max_sv2':  [m['max_sv2']  for m in per_matrix],
+        'cond':     [m['cond']     for m in per_matrix if math.isfinite(m['cond'])],
+        'eff_rank': [m['eff_rank'] for m in per_matrix if math.isfinite(m['eff_rank'])],
+        'max_sv2':  [m['max_sv2']  for m in per_matrix if math.isfinite(m['max_sv2'])],
     }
 
     return {

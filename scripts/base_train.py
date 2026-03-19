@@ -509,7 +509,8 @@ while True:
         # Log to wandb: global scalars, per-type scalars, and histograms
         sv_wandb = {**sv['wandb'], 'step': step, 'total_training_flops': flops_so_far}
         for metric, values in sv['histograms'].items():
-            sv_wandb[f'sv/hist/{metric}'] = wandb.Histogram(values)
+            if values:  # skip if empty (all matrices diverged/NaN — histogram would crash)
+                sv_wandb[f'sv/hist/{metric}'] = wandb.Histogram(values)
         wandb_run.log(sv_wandb)
         # Save full record (including per_matrix) to JSONL for matplotlib
         save_sv_stats(sv, step, sv_stats_filepath, flops=flops_so_far)
