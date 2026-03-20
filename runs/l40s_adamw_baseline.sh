@@ -9,13 +9,10 @@
 #SBATCH --mem=32G
 #SBATCH --output=/dev/null
 
-# d12 AdamW-only baseline on 1×L40S.
+# d12 AdamW-only baseline on 1×L40S — LR sweep.
 # Uses AdamW for ALL parameters (including matrix params that normally use Muon).
-# Weight decay is applied (same as Muon baseline for comparability).
-#
-# Note on --matrix-lr: Muon's default lr=0.02 is far too high for AdamW.
-# We use 3e-3 as a starting point; tune if loss diverges or is too slow.
-# The betas (0.8, 0.95) are inherited from the Karpathy speedrun convention.
+# Betas: (0.9, 0.95) — standard for transformer AdamW (not the speedrun (0.8, 0.95)).
+# Runs three LR values: 1e-3 / 3e-3 / 1e-2. Each takes ~4h, ~12h total.
 #
 # Usage:
 #   sbatch runs/l40s_adamw_baseline.sh
@@ -78,27 +75,42 @@ RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_isometry_results"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running d${DEPTH} AdamW-only baseline (1×L40S, BF16)"
-START=$(date +%s)
+run_exp() {
+    local TAG_SUFFIX="$1"
+    local WANDB_NAME="$2"
+    local EXTRA_ARGS="${@:3}"
+    local EXP_TAG="${SERIES_NAME}_l40s_adamw_${TAG_SUFFIX}"
+    local LOG="$RESULTS_DIR/${EXP_TAG}.log"
 
-python -m scripts.base_train \
-    --depth=$DEPTH \
-    --optimizer=adamw \
-    --matrix-lr=3e-3 \
-    --run="${SERIES_NAME} adamw baseline wd=0.2" \
-    --model-tag="${TAG}" \
-    --weight-decay=0.2 \
-    --core-metric-every=999999 \
-    --sample-every=-1 \
-    --save-every=-1 \
-    # --ortho-init \
-    2>&1 | tee "$LOG"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running: ${WANDB_NAME}"
+    local START=$(date +%s)
 
-END=$(date +%s)
-ELAPSED=$((END - START))
-VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] l40s_adamw_baseline: bpb=$VAL_BPB, time=${ELAPSED}s"
+    python -m scripts.base_train \
+        --depth=$DEPTH \
+        --optimizer=adamw \
+        --adam-beta1=0.9 \
+        --adam-beta2=0.95 \
+        --weight-decay=0.2 \
+        --run="${SERIES_NAME} ${WANDB_NAME}" \
+        --model-tag="${EXP_TAG}" \
+        --core-metric-every=999999 \
+        --sample-every=-1 \
+        --save-every=-1 \
+        $EXTRA_ARGS \
+        2>&1 | tee "$LOG"
 
-RESULTS_FILE="$RESULTS_DIR/results.csv"
-[ ! -f "$RESULTS_FILE" ] && echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
-echo "l40s_adamw_baseline,$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+    local END=$(date +%s)
+    local ELAPSED=$((END - START))
+    local VAL_BPB=$(grep "Validation bpb:" "$LOG" | tail -1 | grep -oP '[\d.]+$')
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${EXP_TAG}: bpb=$VAL_BPB, time=${ELAPSED}s"
+
+    RESULTS_FILE="$RESULTS_DIR/results.csv"
+    [ ! -f "$RESULTS_FILE" ] && echo "name,val_bpb,train_time_sec" > "$RESULTS_FILE"
+    echo "${EXP_TAG},$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
+}
+
+# LR sweep: 1e-3 / 3e-3 / 1e-2 with standard AdamW betas (0.9, 0.95)
+# Literature suggests 1e-3 is typical for ~300M models; 3e-3 may be marginal.
+run_exp "lr1e3" "adamw lr=1e-3 β=(0.9,0.95)" --matrix-lr=1e-3
+run_exp "lr3e3" "adamw lr=3e-3 β=(0.9,0.95)" --matrix-lr=3e-3
+run_exp "lr1e2" "adamw lr=1e-2 β=(0.9,0.95)" --matrix-lr=1e-2

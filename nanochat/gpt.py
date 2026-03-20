@@ -419,7 +419,7 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5, optimizer_type='muon-adamw'):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5, optimizer_type='muon-adamw', adam_beta1=0.8, adam_beta2=0.95):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
@@ -483,7 +483,7 @@ class GPT(nn.Module):
             # matching the same scaling applied to the other AdamW groups.
             param_groups.append(dict(
                 kind='adamw', params=matrix_params, lr=matrix_lr * dmodel_lr_scale,
-                betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay,
+                betas=(adam_beta1, adam_beta2), eps=1e-10, weight_decay=weight_decay,
                 schedule_wd=True,  # flag: apply weight decay schedule in training loop
             ))
             print0(f"Using AdamW for all parameters (matrix_lr={matrix_lr * dmodel_lr_scale:.6f}, weight_decay={weight_decay:.6f})")

@@ -65,6 +65,8 @@ parser.add_argument("--weight-decay", type=float, default=0.28, help="cautious w
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
 parser.add_argument("--scalar-lr", type=float, default=0.5, help="learning rate for scalars (resid_lambdas, x0_lambdas)")
 parser.add_argument("--optimizer", type=str, default="muon-adamw", choices=["muon-adamw", "adamw"], help="optimizer: muon-adamw (default, Muon for matrices + AdamW for rest) or adamw (AdamW for all params)")
+parser.add_argument("--adam-beta1", type=float, default=0.8, help="beta1 for AdamW matrix group when --optimizer=adamw (default 0.8 matches speedrun; standard AdamW uses 0.9)")
+parser.add_argument("--adam-beta2", type=float, default=0.95, help="beta2 for AdamW matrix group when --optimizer=adamw (default 0.95, standard for transformers)")
 # Orthogonal regularization (isometry-promoting, replaces or supplements weight decay)
 parser.add_argument("--orth-reg-lambda", type=float, default=0.0, help="orthogonal regularization strength λ (0 = disabled). Penalizes ||W^T W - sI||_F^2")
 parser.add_argument("--orth-reg-decoupled", action="store_true", help="use AdamO-style decoupled ortho reg (apply outside optimizer moments). Recommended over coupled mode.")
@@ -361,6 +363,8 @@ optimizer = model.setup_optimizer(
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
     optimizer_type=args.optimizer,
+    adam_beta1=args.adam_beta1,
+    adam_beta2=args.adam_beta2,
 )
 
 # Orthogonal regularization setup
