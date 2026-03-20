@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d24 Baseline experiment on a single H200.
 # Same as run_h200_d24_baseline.sh but 1 GPU — no torchrun, ~8x slower wall clock.

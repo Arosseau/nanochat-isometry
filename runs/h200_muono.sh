@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # MuonO experiment: Muon + decoupled orthogonal regularization for 2D matrix params,
 # with AdamW for 1D params (embeddings, scalars). Replaces weight decay with isometry-

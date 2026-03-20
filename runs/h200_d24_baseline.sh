@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d24 Baseline experiment: Karpathy's default Muon+AdamW with weight decay.
 # Uses 1×H200 GPU, FP8 training, and ~170 data shards.

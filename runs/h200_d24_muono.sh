@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d24 MuonO experiment: Muon + decoupled orthogonal regularization for 2D matrix params,
 # with AdamW for 1D params (embeddings, scalars). 8×H200 GPUs with FP8 training.

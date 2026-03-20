@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # Baseline experiment: Muon+AdamW WITHOUT weight decay at d12.
 # Control condition for MuonO/AdamO comparisons (which also use no weight decay).

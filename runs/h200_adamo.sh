@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # AdamO experiment: AdamW for ALL parameters + decoupled orthogonal regularization.
 # Replaces Muon entirely with AdamW and uses isometry-promoting regularization

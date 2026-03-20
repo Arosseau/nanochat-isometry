@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # Baseline experiment: Karpathy's default Muon+AdamW with weight decay at d12.
 # This is the control run that our isometry regularization variants compare against.

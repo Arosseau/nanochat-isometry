@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d12 Baseline + orthogonal init on 1×L40S.
 # Identical to l40s_baseline.sh except init: c_q/c_k/c_v/c_fc initialized

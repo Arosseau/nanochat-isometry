@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d12 AdamW-only baseline on 1×L40S.
 # Uses AdamW for ALL parameters (including matrix params that normally use Muon).

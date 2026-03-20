@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # All d12 isometry experiments in a single script (1×H200, single GPU).
 # Runs 7 experiments sequentially:

@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d24 Baseline + orthogonal init on a single H200.
 # Identical to h200_d24_1gpu_baseline.sh except init: c_q/c_k/c_v/c_fc initialized

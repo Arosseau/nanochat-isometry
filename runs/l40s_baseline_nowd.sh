@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d12 Baseline: Muon+AdamW WITHOUT weight decay on 1×L40S.
 # Control condition for MuonO/AdamO comparisons (which also use no weight decay).

@@ -7,6 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
+#SBATCH --output=/dev/null
 
 # d12 MuonO lambda sweep on 1×L40S (Ada Lovelace, full GPU via 4 shards).
 # No FP8 (requires Hopper SM9.0+). BF16 auto-detected.
