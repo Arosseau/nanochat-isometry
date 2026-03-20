@@ -17,6 +17,12 @@ Good old AdamW optimizer, fused kernel.
 https://arxiv.org/abs/1711.05101
 """
 
+# Allow dynamic parameter shapes: needed when --optimizer=adamw routes params of
+# many different shapes through adamw_step_fused (e.g. scalars, small gates, big
+# matrices all in one optimizer). Without this, dynamo treats parameter shapes as
+# static guards even with dynamic=True, hitting the recompile limit immediately.
+torch._dynamo.config.force_parameter_static_shapes = False
+
 @torch.compile(dynamic=True, fullgraph=True)
 def adamw_step_fused(
     p: Tensor,              # (32768, 768) - parameter tensor

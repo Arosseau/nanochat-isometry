@@ -41,7 +41,7 @@ else
     cd "$REPO_DIR"
     git reset --hard HEAD
     git clean -fd
-    git pull --rebase origin main
+    git pull --rebase origin master
 fi
 
 cd "$REPO_DIR"
