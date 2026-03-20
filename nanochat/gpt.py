@@ -216,35 +216,52 @@ class GPT(nn.Module):
         self.register_buffer("sin", sin, persistent=False)
 
     @torch.no_grad()
-    def init_weights(self):
+    def init_weights(self, ortho_init=False):
         """
         Initialize the full model in this one function for maximum clarity.
 
         wte (embedding):     normal, std=1.0
         lm_head:             normal, std=0.001
         for each block:
-            attn.c_q:        uniform, std=1/sqrt(n_embd)
-            attn.c_k:        uniform, std=1/sqrt(n_embd)
-            attn.c_v:        uniform, std=1/sqrt(n_embd)
-            attn.c_proj:     zeros
-            mlp.c_fc:        uniform, std=0.4/sqrt(n_embd)
-            mlp.c_proj:      zeros
+            attn.c_q:        uniform, std=1/sqrt(n_embd)   [ortho_init: orthogonal, gain=1]
+            attn.c_k:        uniform, std=1/sqrt(n_embd)   [ortho_init: orthogonal, gain=1]
+            attn.c_v:        uniform, std=1/sqrt(n_embd)   [ortho_init: orthogonal, gain=1]
+            attn.c_proj:     zeros  (always — residual branch must start silent)
+            mlp.c_fc:        uniform, std=0.4/sqrt(n_embd) [ortho_init: orthogonal, gain=1]
+            mlp.c_proj:      zeros  (always — residual branch must start silent)
+
+        ortho_init=True replaces the uniform init for c_q/c_k/c_v/c_fc with
+        torch.nn.init.orthogonal_ (gain=1.0), giving singular values exactly 1 at
+        initialization — perfect isometry. c_proj stays zero (residual branch) and
+        ve_gate stays small-positive (gate convention); both are excluded from Muon
+        weight decay and not part of the isometry hypothesis.
         """
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
 
-        # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
+        # Transformer blocks
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            if ortho_init:
+                # Orthogonal init: all singular values = 1 at start (exact isometry).
+                # For square matrices (c_q/c_k/c_v): W is a random orthogonal matrix.
+                # For tall matrices (c_fc, shape out>in): W^T W = I (semi-orthogonal columns).
+                torch.nn.init.orthogonal_(block.attn.c_q.weight)
+                torch.nn.init.orthogonal_(block.attn.c_k.weight)
+                torch.nn.init.orthogonal_(block.attn.c_v.weight)
+            else:
+                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
+                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero (always)
+            if ortho_init:
+                torch.nn.init.orthogonal_(block.mlp.c_fc.weight)
+            else:
+                torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
+            torch.nn.init.zeros_(block.mlp.c_proj.weight) # projections are zero (always)
 
         # Per-layer scalars: non-uniform init (stronger residual at early layers, weaker at deep layers)
         n_layer = self.config.n_layer

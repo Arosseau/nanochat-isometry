@@ -71,6 +71,7 @@ parser.add_argument("--orth-reg-decoupled", action="store_true", help="use AdamO
 parser.add_argument("--orth-reg-lr-scale", type=float, default=1.0, help="η_iso / η ratio for decoupled ortho reg learning rate (default: 1.0 = same as base lr)")
 parser.add_argument("--orth-reg-activation-scale", type=float, default=1.0, help="activation scale s for ortho reg target: W^T W ≈ sI (use 2.0 for ReLU/relu^2 compensation)")
 parser.add_argument("--orth-reg-rect-scale", action="store_true", help="enable (out_dim/in_dim) scale correction for tall matrices: target becomes s*(out_dim/in_dim) instead of s. Disabled by default.")
+parser.add_argument("--ortho-init", action="store_true", help="initialize c_q/c_k/c_v/c_fc orthogonally (all singular values = 1 at start). c_proj stays zero. Isometric initialization baseline.")
 # Normalization
 parser.add_argument("--norm-mode", type=str, default="rmsnorm", choices=["rmsnorm", "layernorm", "none"], help="normalization mode: rmsnorm (default, parameterless), layernorm (learnable scale/offset), none (skip normalization)")
 parser.add_argument("--freeze-norm", action="store_true", help="freeze LayerNorm parameters at init values (weight=1, bias=0). Only effective with --norm-mode=layernorm.")
@@ -129,6 +130,8 @@ def _auto_run_name(args):
         else:
             parts.append("baseline")
     parts.append("no-wd" if args.weight_decay == 0.0 else f"wd={args.weight_decay}")
+    if args.ortho_init:
+        parts.append("ortho-init")
     parts.append(f"d{args.depth}")
     return " ".join(parts)
 
@@ -193,7 +196,7 @@ model_config = model.config
 model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 model.to_empty(device=device) # 2) All tensors get storage on target device but with uninitialized (garbage) data
-model.init_weights() # 3) All tensors get initialized
+model.init_weights(ortho_init=args.ortho_init) # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()
