@@ -50,8 +50,12 @@ def _load_flash_attention_2():
         if major < 8:
             return None
         import flash_attn as _fa2_pkg
+        # Verify the C extension actually loaded (catches CUDA/PyTorch ABI mismatches)
+        _ = _fa2_pkg.flash_attn_func
         return _fa2_pkg
-    except Exception:
+    except Exception as e:
+        import sys
+        print(f"WARNING: flash-attn import failed ({type(e).__name__}: {e})", file=sys.stderr)
         return None
 
 
