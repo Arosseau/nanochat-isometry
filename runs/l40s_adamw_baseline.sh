@@ -109,8 +109,8 @@ run_exp() {
     echo "${EXP_TAG},$VAL_BPB,$ELAPSED" >> "$RESULTS_FILE"
 }
 
-# LR sweep: 1e-3 / 3e-3 / 1e-2 with standard AdamW betas (0.9, 0.95)
-# Literature suggests 1e-3 is typical for ~300M models; 3e-3 may be marginal.
-run_exp "lr1e3" "adamw lr=1e-3 β=(0.9,0.95)" --matrix-lr=1e-3
-run_exp "lr3e3" "adamw lr=3e-3 β=(0.9,0.95)" --matrix-lr=3e-3
-run_exp "lr1e2" "adamw lr=1e-2 β=(0.9,0.95)" --matrix-lr=1e-2
+# LR sweep: 1e-4 / 3e-4 / 1e-2 with standard AdamW betas (0.9, 0.95)
+# Literature suggests 1e-4 is typical for ~300M models; 3e-4 may be marginal.
+run_exp "lr1e-4" "adamw lr=1e-4 β=(0.9,0.95)" --matrix-lr=1e-4
+run_exp "lr3e-4" "adamw lr=3e-4 β=(0.9,0.95)" --matrix-lr=3e-4
+# run_exp "lr1e-2" "adamw lr=1e-2 β=(0.9,0.95)" --matrix-lr=1e-2
