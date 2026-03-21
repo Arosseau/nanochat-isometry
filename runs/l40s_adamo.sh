@@ -112,25 +112,51 @@ log "=================================================="
 # 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
 run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
     --optimizer=adamw \
-    --matrix-lr=3e-4 \
+    --matrix-lr=1e-3 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
-
-# 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
-run_exp "adamo_relu" "adamo 1e-3 decoupled relu no-wd" \
+    
+run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
     --optimizer=adamw \
-    --matrix-lr=3e-4 \
+    --matrix-lr=1e-3 \
+    --weight-decay=0.0 \
+    --orth-reg-lambda=1e-2 \
+    --orth-reg-decoupled
+    
+run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
+    --optimizer=adamw \
+    --matrix-lr=1e-3 \
+    --weight-decay=0.0 \
+    --orth-reg-lambda=1e-1 \
+    --orth-reg-decoupled
+    
+run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
+    --optimizer=adamw \
+    --matrix-lr=1e-3 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
-    --orth-reg-decoupled \
-    --orth-reg-activation-scale=2.0
-
-# 3) AdamW baseline (standard weight decay, no ortho reg) as control
-run_exp "adamw_baseline" "adamw wd=0.01" \
+    
+run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
     --optimizer=adamw \
-    --matrix-lr=3e-4 \
-    --weight-decay=0.01
+    --matrix-lr=1e-3 \
+    --weight-decay=0.0 \
+    --orth-reg-lambda=1e-2 \
+
+# # 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
+# run_exp "adamo_relu" "adamo 1e-3 decoupled relu no-wd" \
+#     --optimizer=adamw \
+#     --matrix-lr=1e-3 \
+#     --weight-decay=0.0 \
+#     --orth-reg-lambda=1e-3 \
+#     --orth-reg-decoupled \
+#     --orth-reg-activation-scale=2.0
+
+# # 3) AdamW baseline (standard weight decay, no ortho reg) as control
+# run_exp "adamw_baseline" "adamw wd=0.01" \
+#     --optimizer=adamw \
+#     --matrix-lr=1e-3 \
+#     --weight-decay=0.01
 
 log "=================================================="
 log "L40S AdamO experiments complete!"
