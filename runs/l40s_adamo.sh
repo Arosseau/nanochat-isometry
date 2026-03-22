@@ -108,39 +108,43 @@ log "=================================================="
 log "${SERIES_NAME} L40S AdamO Experiments (d${DEPTH}, 1×L40S, BF16)"
 log "=================================================="
 
-# 1) AdamO: AdamW everywhere + decoupled ortho reg, no weight decay
-run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
+# AdamO lambda sweep — decoupled (AdamO-style) and coupled variants
+# All: AdamW for all params, no weight decay, matrix-lr=1e-3
+
+# Decoupled (AdamO): ortho reg applied outside optimizer moments
+run_exp "dec_1e3" "adamo λ=1e-3 decoupled no-wd" \
     --optimizer=adamw \
     --matrix-lr=1e-3 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-3 \
     --orth-reg-decoupled
-    
-run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
+
+run_exp "dec_1e2" "adamo λ=1e-2 decoupled no-wd" \
     --optimizer=adamw \
     --matrix-lr=1e-3 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-2 \
     --orth-reg-decoupled
-    
-run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
+
+run_exp "dec_1e1" "adamo λ=1e-1 decoupled no-wd" \
     --optimizer=adamw \
     --matrix-lr=1e-3 \
     --weight-decay=0.0 \
     --orth-reg-lambda=1e-1 \
     --orth-reg-decoupled
-    
-run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
+
+# Coupled: ortho reg added to gradient before optimizer step
+run_exp "coup_1e3" "adamo λ=1e-3 coupled no-wd" \
     --optimizer=adamw \
     --matrix-lr=1e-3 \
     --weight-decay=0.0 \
-    --orth-reg-lambda=1e-3 \
-    
-run_exp "adamo" "adamo 1e-3 decoupled no-wd" \
+    --orth-reg-lambda=1e-3
+
+run_exp "coup_1e2" "adamo λ=1e-2 coupled no-wd" \
     --optimizer=adamw \
     --matrix-lr=1e-3 \
     --weight-decay=0.0 \
-    --orth-reg-lambda=1e-2 \
+    --orth-reg-lambda=1e-2
 
 # # 2) AdamO with ReLU activation scale (2.0) to compensate relu^2 signal loss
 # run_exp "adamo_relu" "adamo 1e-3 decoupled relu no-wd" \
