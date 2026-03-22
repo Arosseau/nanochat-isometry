@@ -94,7 +94,6 @@ python -m scripts.base_train \
     --core-metric-every=999999 \
     --sample-every=-1 \
     --save-every=-1 \
-    # --ortho-init \
     2>&1 | tee "$LOG"
 
 END=$(date +%s)
