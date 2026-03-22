@@ -27,7 +27,7 @@ def _load_flash_attention_3():
     if not torch.cuda.is_available():
         return None
     try:
-        major, _ = torch.cuda.get_device_capability()
+        major, _ = torch.cuda.get_device_capability(0)
         if major != 9:
             return None
         import os
@@ -43,18 +43,25 @@ def _load_flash_attention_3():
 # =============================================================================
 def _load_flash_attention_2():
     """Try to load Flash Attention 2 (requires sm80+, install: pip install flash-attn)."""
+    import sys
     if not torch.cuda.is_available():
         return None
     try:
-        major, _ = torch.cuda.get_device_capability()
-        if major < 8:
-            return None
+        # Use explicit device=0 — get_device_capability() with no args calls
+        # current_device() which returns 0 (uninitialized) at import time,
+        # causing a false major=0 → major < 8 → silent None return.
+        try:
+            major, _ = torch.cuda.get_device_capability(0)
+            if major < 8:
+                print(f"WARNING: flash-attn skipped (GPU sm{major}x < sm80)", file=sys.stderr)
+                return None
+        except Exception:
+            pass  # can't determine capability — proceed and let import decide
         import flash_attn as _fa2_pkg
         # Verify the C extension actually loaded (catches CUDA/PyTorch ABI mismatches)
         _ = _fa2_pkg.flash_attn_func
         return _fa2_pkg
     except Exception as e:
-        import sys
         print(f"WARNING: flash-attn import failed ({type(e).__name__}: {e})", file=sys.stderr)
         return None
 
