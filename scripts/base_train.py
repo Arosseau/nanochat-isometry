@@ -73,6 +73,7 @@ parser.add_argument("--orth-reg-decoupled", action="store_true", help="use AdamO
 parser.add_argument("--orth-reg-lr-scale", type=float, default=1.0, help="η_iso / η ratio for decoupled ortho reg learning rate (default: 1.0 = same as base lr)")
 parser.add_argument("--orth-reg-activation-scale", type=float, default=1.0, help="activation scale s for ortho reg target: W^T W ≈ sI (use 2.0 for ReLU/relu^2 compensation)")
 parser.add_argument("--orth-reg-rect-scale", action="store_true", help="enable (out_dim/in_dim) scale correction for tall matrices: target becomes s*(out_dim/in_dim) instead of s. Disabled by default.")
+parser.add_argument("--orth-reg-normalize", action="store_true", help="divide Frobenius penalty by gram_dim so strength is independent of layer width. Disabled by default.")
 parser.add_argument("--ortho-init", action="store_true", help="initialize c_q/c_k/c_v/c_fc orthogonally (all singular values = 1 at start). c_proj stays zero. Isometric initialization baseline.")
 # Normalization
 parser.add_argument("--norm-mode", type=str, default="rmsnorm", choices=["rmsnorm", "layernorm", "none"], help="normalization mode: rmsnorm (default, parameterless), layernorm (learnable scale/offset), none (skip normalization)")
@@ -376,7 +377,8 @@ if args.orth_reg_lambda > 0:
     mode_str = "decoupled (AdamO)" if args.orth_reg_decoupled else "coupled (auxiliary loss)"
     print0(f"Orthogonal regularization: λ={args.orth_reg_lambda}, mode={mode_str}, "
            f"activation_scale={args.orth_reg_activation_scale}, rect_scale={orth_rect_scale}, "
-           f"lr_scale={args.orth_reg_lr_scale}, params={len(ortho_matrix_params)}")
+           f"normalize={args.orth_reg_normalize}, lr_scale={args.orth_reg_lr_scale}, "
+           f"params={len(ortho_matrix_params)}")
 
 if resuming:
     optimizer.load_state_dict(optimizer_data)
@@ -610,7 +612,8 @@ while True:
     # Done once (not per micro-step) since R_iso depends only on params, not on data.
     if args.orth_reg_lambda > 0 and not args.orth_reg_decoupled:
         orth_loss = compute_ortho_reg_loss(ortho_matrix_params, args.orth_reg_lambda,
-                                           args.orth_reg_activation_scale, orth_rect_scale)
+                                           args.orth_reg_activation_scale, orth_rect_scale,
+                                           args.orth_reg_normalize)
         if scaler is not None:
             scaler.scale(orth_loss).backward()
         else:
@@ -644,7 +647,8 @@ while True:
     if args.orth_reg_lambda > 0 and args.orth_reg_decoupled:
         orth_lr = args.matrix_lr * batch_lr_scale * lrm * args.orth_reg_lr_scale
         apply_decoupled_ortho_reg(ortho_matrix_params, orth_lr, args.orth_reg_lambda,
-                                  args.orth_reg_activation_scale, orth_rect_scale)
+                                  args.orth_reg_activation_scale, orth_rect_scale,
+                                  args.orth_reg_normalize)
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
     synchronize()

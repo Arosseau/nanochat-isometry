@@ -8,11 +8,13 @@ Implements Gram-matrix based orthogonal regularization with two modes:
    the optimizer, keeping isometry gradients out of Adam/Muon moments.
 
 The Frobenius penalty on the Gram deviation is:
-  R_iso(W) = 0.5 * ||Gram(W) - s·I||_F^2 / gram_dim
+  R_iso(W) = 0.5 * ||Gram(W) - s·I||_F^2          (default, --orth-reg-normalize not set)
+  R_iso(W) = 0.5 * ||Gram(W) - s·I||_F^2 / gram_dim  (with --orth-reg-normalize)
 
-where Gram(W) is computed on the smaller dimension of W for efficiency,
-s is the activation scale (e.g., 2.0 for ReLU to compensate half-zeroed signal),
-and gram_dim normalizes the penalty to be independent of layer width.
+where Gram(W) is computed on the smaller dimension of W for efficiency and
+s is the activation scale (e.g., 2.0 for ReLU to compensate half-zeroed signal).
+The /gram_dim normalization makes λ scale-independent of layer width but is off
+by default so λ is directly comparable to weight decay in the literature.
 
 Two optional scaling corrections (each independently configurable):
 - activation_scale: scale s for the identity target W^T W ≈ sI.
@@ -86,28 +88,30 @@ def _gram_deviation(weight: Tensor, activation_scale: float = 1.0,
 
 
 def gram_frobenius_penalty(weight: Tensor, activation_scale: float = 1.0,
-                            rect_scale: bool = True) -> Tensor:
+                            rect_scale: bool = True, normalize: bool = False) -> Tensor:
     """
-    Compute 0.5 * ||Gram(W) - s·I||_F^2 / gram_dim for a single weight matrix.
-    Normalized by gram_dim so the penalty magnitude is independent of layer width.
+    Compute 0.5 * ||Gram(W) - s·I||_F^2 (optionally / gram_dim) for a single weight matrix.
+    normalize=True divides by gram_dim so strength is independent of layer width.
+    normalize=False (default) keeps the raw Frobenius norm sum.
     """
     deviation, gram_dim = _gram_deviation(weight, activation_scale, rect_scale)
-    return 0.5 * (deviation ** 2).sum() / gram_dim
+    penalty = 0.5 * (deviation ** 2).sum()
+    return penalty / gram_dim if normalize else penalty
 
 
 @torch.no_grad()
 def gram_frobenius_grad(weight: Tensor, activation_scale: float = 1.0,
-                         rect_scale: bool = True) -> Tensor:
+                         rect_scale: bool = True, normalize: bool = False) -> Tensor:
     """
-    Analytical gradient of the normalized Frobenius penalty w.r.t. weight.
+    Analytical gradient of the Frobenius penalty w.r.t. weight.
 
-    For penalty R = 0.5 * ||Gram(W) - s·I||_F^2 / d:
+    For penalty R = 0.5 * ||Gram(W) - s·I||_F^2 (optionally / gram_dim):
 
     If out_dim <= in_dim (Gram = W @ W^T):
-        ∂R/∂W = 2 * (W W^T - sI) @ W / gram_dim
+        ∂R/∂W = 2 * (W W^T - sI) @ W  [/ gram_dim if normalize]
 
     If out_dim > in_dim (Gram = W^T @ W):
-        ∂R/∂W = 2 * W @ (W^T W - sI) / gram_dim
+        ∂R/∂W = 2 * W @ (W^T W - sI)  [/ gram_dim if normalize]
 
     Note: for zero-initialized weights (e.g., c_proj at init), the gradient
     is zero since W=0 makes the matmul vanish, so this naturally doesn't
@@ -115,10 +119,11 @@ def gram_frobenius_grad(weight: Tensor, activation_scale: float = 1.0,
     """
     out_dim, in_dim = weight.shape
     deviation, gram_dim = _gram_deviation(weight, activation_scale, rect_scale)
+    scale = 2.0 / gram_dim if normalize else 2.0
     if out_dim <= in_dim:
-        return (2.0 / gram_dim) * (deviation @ weight)
+        return scale * (deviation @ weight)
     else:
-        return (2.0 / gram_dim) * (weight @ deviation)
+        return scale * (weight @ deviation)
 
 
 def get_ortho_reg_params(model) -> list[Tensor]:
@@ -139,7 +144,8 @@ def get_ortho_reg_params(model) -> list[Tensor]:
 
 def compute_ortho_reg_loss(params: list[Tensor], lambda_reg: float,
                            activation_scale: float = 1.0,
-                           rect_scale: bool = True) -> Tensor:
+                           rect_scale: bool = True,
+                           normalize: bool = False) -> Tensor:
     """
     Compute total orthogonal regularization loss (coupled / auxiliary loss mode).
 
@@ -154,14 +160,15 @@ def compute_ortho_reg_loss(params: list[Tensor], lambda_reg: float,
     device = params[0].device
     total = torch.zeros(1, device=device)
     for p in params:
-        total = total + gram_frobenius_penalty(p, activation_scale, rect_scale)
+        total = total + gram_frobenius_penalty(p, activation_scale, rect_scale, normalize)
     return lambda_reg * total
 
 
 @torch.no_grad()
 def apply_decoupled_ortho_reg(params: list[Tensor], lr: float, lambda_reg: float,
                                activation_scale: float = 1.0,
-                               rect_scale: bool = True) -> None:
+                               rect_scale: bool = True,
+                               normalize: bool = False) -> None:
     """
     Apply decoupled orthogonal regularization step (AdamO-style).
 
@@ -179,5 +186,5 @@ def apply_decoupled_ortho_reg(params: list[Tensor], lr: float, lambda_reg: float
         rect_scale: whether to apply (out_dim/in_dim) correction for tall matrices
     """
     for p in params:
-        grad = gram_frobenius_grad(p, activation_scale, rect_scale)
+        grad = gram_frobenius_grad(p, activation_scale, rect_scale, normalize)
         p.sub_(lr * lambda_reg * grad)
